@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 
 from .metrics import METRIC_KEYS, METRIC_NAMES
@@ -17,8 +18,19 @@ for k in METRIC_KEYS:
 
 def _json_candidates(text: str):
     """Yield every balanced {...} substring, last one first."""
-    spans, stack = [], []
+    spans, stack, quote, escaped = [], [], None, False
     for i, ch in enumerate(text):
+        if quote:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == quote:
+                quote = None
+            continue
+        if ch in ('"', "'") and stack:
+            quote = ch
+            continue
         if ch == "{":
             stack.append(i)
         elif ch == "}" and stack:
@@ -29,6 +41,39 @@ def _json_candidates(text: str):
         yield text[s:e]
 
 
+def validate_scores(obj):
+    """Enforce exactly twelve unique canonical numeric scores; booleans/strings are not scores."""
+    if not isinstance(obj, dict):
+        return None, ["not_an_object"]
+    scores, errors = {}, []
+    for raw_key, value in obj.items():
+        key = _ALIASES.get(str(raw_key).strip().lower())
+        if key is None:
+            errors.append(f"unknown_metric:{raw_key}")
+            continue
+        if key in scores:
+            errors.append(f"duplicate_metric:{key}")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            errors.append(f"non_numeric:{key}")
+        elif not math.isfinite(value) or not 0 <= value <= 1:
+            errors.append(f"out_of_range:{key}")
+        else:
+            scores[key] = round(float(value), 4)
+    missing = set(METRIC_KEYS) - set(scores)
+    if missing:
+        errors.append("missing:" + ",".join(sorted(missing)))
+    return (None, errors) if errors else (scores, [])
+
+
+def _unique_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
 def validate_output(text: str):
     """Return (scores | None, errors). scores has exactly the 12 metric keys as floats in [0, 1]."""
     errors = []
@@ -37,30 +82,11 @@ def validate_output(text: str):
     for cand in _json_candidates(text):
         cleaned = re.sub(r",\s*}", "}", cand.replace("'", '"'))
         try:
-            obj = json.loads(cleaned)
-        except json.JSONDecodeError:
+            obj = json.loads(cleaned, object_pairs_hook=_unique_pairs)
+        except (json.JSONDecodeError, ValueError):
             errors.append("json_decode_error")
             continue
-        if not isinstance(obj, dict):
-            errors.append("not_an_object")
-            continue
-        scores, errs = {}, []
-        for raw_k, v in obj.items():
-            k = _ALIASES.get(str(raw_k).strip().lower())
-            if k is None:
-                continue
-            try:
-                fv = float(v)
-            except (TypeError, ValueError):
-                errs.append(f"non_numeric:{k}")
-                continue
-            if not (0.0 <= fv <= 1.0):
-                errs.append(f"out_of_range:{k}={fv}")
-                continue
-            scores[k] = round(fv, 4)
-        missing = [k for k in METRIC_KEYS if k not in scores]
-        if missing:
-            errs.append("missing:" + ",".join(missing))
+        scores, errs = validate_scores(obj)
         if not errs:
             return scores, []
         errors.extend(errs)
