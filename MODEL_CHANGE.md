@@ -1,6 +1,6 @@
 # Sanjana's PRISM comparison: InternVL3.5-2B
 
-> This is the improved `codex/internvl35-model-modified` branch. Start with
+> This is the improved `internvl35-model-modified` branch. Start with
 > [MODIFIED_PIPELINE.md](MODIFIED_PIPELINE.md) for the current run instructions,
 > shared pipeline fixes, verification evidence and remaining GPU checks.
 
@@ -36,9 +36,9 @@ This improved branch also adds shared data, checkpoint, prediction and evaluatio
 
 ## Open and run
 
-[Open this branch's Colab notebook](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/internvl35-model-modified/colab_run_pipeline.ipynb).
+[Open this branch's Colab notebook](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/internvl35-model-modified/colab_run_pipeline.ipynb).
 
-1. Select a GPU runtime. The notebook clones branch `codex/internvl35-model-modified` into
+1. Select a GPU runtime. The notebook clones branch `internvl35-model-modified` into
    `MyDrive/prism_ladder_internvl35_modified`.
 2. Supply the exact same team `data/` directory (originals, releases, metadata and split files)
    used by the other model branches. Do not copy another model's adapters or predictions.
