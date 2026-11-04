@@ -389,9 +389,11 @@ class ValidationGeneration:
         score = mae + 0.5 * (1 - rate)
         if not math.isfinite(score):
             raise RuntimeError("Non-finite validation selection score; best adapter is preserved")
-        record = {"step": state.global_step, "epoch": state.epoch, "val_gen_MAE": mae, "val_valid_rate": rate,
-                  "selection_score": score, "is_best": score < self.best, "run_fingerprint": self.run_fingerprint}
-        if score < self.best:
+        record = {"step": state.global_step, "epoch": state.epoch, "val_gen_MAE": mae if valid else None, "val_valid_rate": rate,
+                  "selection_score": score, "is_best": bool(valid) and score < self.best, "run_fingerprint": self.run_fingerprint}
+        if not valid:
+            record["validation_failed"] = "no_valid_predictions"
+        if valid and score < self.best:
             save_adapter_preserving_previous(model, self.proc, self.best_path, record)
             self.best = score
         self._log(record)
