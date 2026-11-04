@@ -53,6 +53,7 @@ def main():
     if cfg["inference"]["test_limit"] and a.split == "test":
         items = items[: cfg["inference"]["test_limit"]]
     adapter = abspath(a.adapter) if a.adapter and a.adapter.lower() != "none" else None
+    cfg["_adapter_path"] = adapter
     model, proc = load_model(cfg, adapter), load_processor(cfg)
     rows = predict(model, proc, cfg, items, a.prompt, os.path.join(P(cfg, "predictions_dir"), f"{a.name}_{a.split}.jsonl"))
     valid = sum(1 for r in rows if r["pred"])
