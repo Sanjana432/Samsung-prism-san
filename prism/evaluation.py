@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import itertools
 import math
+from numbers import Real
 import re
 from collections import defaultdict
 
@@ -25,6 +26,25 @@ from .scoring import category_scores, rank_releases
 TOLS = (0.05, 0.10, 0.15)
 
 
+def score_errors(scores):
+    """Strict evaluation boundary: exactly twelve finite real scores; booleans are not scores."""
+    if not isinstance(scores, dict):
+        return ["not_score_object"]
+    errors = []
+    if set(scores) != set(METRIC_KEYS):
+        errors.append("metric_keys_mismatch")
+    for key, value in scores.items():
+        if isinstance(value, bool) or not isinstance(value, Real):
+            errors.append(f"non_numeric:{key}")
+        elif not 0 <= value <= 1 or not math.isfinite(float(value)):
+            errors.append(f"invalid_range:{key}")
+    return errors
+
+
+def _mean(values):
+    return float(np.mean(values)) if values else float("nan")
+
+
 def _safe_corr(fn, a, b):
     if len(a) < 3 or np.std(a) < 1e-9 or np.std(b) < 1e-9:
         return float("nan")
@@ -34,7 +54,9 @@ def _safe_corr(fn, a, b):
 def regression_metrics(gt, pred) -> dict:
     gt, pred = np.asarray(gt, float), np.asarray(pred, float)
     if len(gt) == 0:
-        return {"n": 0}
+        return {"n": 0, **{key: float("nan") for key in
+                ("MAE", "RMSE", "PLCC", "SROCC", "bias", "band_acc", "band_macro_F1",
+                 "acc@0.05", "acc@0.10", "acc@0.15")}}
     err = pred - gt
     out = {
         "n": int(len(gt)),
@@ -61,12 +83,36 @@ def regression_metrics(gt, pred) -> dict:
 
 def evaluate(records: list, category_weights=None, top_error_threshold=0.30, gate_threshold=0.95) -> dict:
     """records: [{sample_id, release_id, template, gt: {12}, pred: {12} | None, raw?}]"""
+    checked = []
+    seen, seen_pairs = set(), set()
+    for row in records:
+        identity = row.get("id", (row["sample_id"], row["release_id"]))
+        if identity in seen:
+            raise ValueError(f"duplicate evaluation identity: {identity}")
+        seen.add(identity)
+        pair = (row["sample_id"], row["release_id"])
+        if pair in seen_pairs:
+            raise ValueError(f"duplicate sample/release pair: {pair}")
+        seen_pairs.add(pair)
+        if score_errors(row["gt"]):
+            raise ValueError(f"invalid ground truth for {identity}: {score_errors(row['gt'])}")
+        errors = score_errors(row.get("pred")) if row.get("pred") is not None else []
+        checked.append(dict(row, pred=None if errors else row.get("pred"),
+                            prediction_errors=list(row.get("prediction_errors", [])) + errors))
+    records = checked
     n_all = len(records)
     valid = [r for r in records if r.get("pred")]
     res = {"coverage": {"n_total": n_all, "n_valid": len(valid),
                         "valid_rate": len(valid) / n_all if n_all else float("nan"),
                         "n_retried": sum(1 for r in records if r.get("retried")),
-                        "n_invalid": n_all - len(valid)}}
+                        "n_invalid": n_all - len(valid),
+                        "n_missing": sum(bool(r.get("missing_prediction")) for r in records),
+                        "n_invalid_outputs": sum(not r.get("missing_prediction") and r.get("pred") is None for r in records)}}
+    res["coverage"]["denominator"] = "all expected ground-truth pairs, including absent predictions"
+    res["invalid_outputs"] = [{"id": r.get("id"), "sample_id": r["sample_id"], "release_id": r["release_id"],
+                               "missing_prediction": bool(r.get("missing_prediction")),
+                               "errors": r.get("prediction_errors", [])}
+                              for r in records if r.get("pred") is None]
 
     res["per_metric"] = {k: regression_metrics([r["gt"][k] for r in valid], [r["pred"][k] for r in valid])
                          for k in METRIC_KEYS}
@@ -81,46 +127,7 @@ def evaluate(records: list, category_weights=None, top_error_threshold=0.30, gat
         by_t[r["template"]].append((g["overall"], p["overall"]))
     res["per_template_overall"] = {t: regression_metrics([a for a, _ in v], [b for _, b in v]) for t, v in sorted(by_t.items())}
 
-    # ---------------- ranking / best-release over the 24 edited releases of each Original. The unchanged
-    # control is left out: it is always the ground-truth best, so a model scoring everything 1.0 would win.
-    by_s = defaultdict(dict)
-    for r in valid:
-        if r["release_id"] != "control_0":
-            by_s[r["sample_id"]][r["release_id"]] = r
-    best_hits, exact_hits, taus, rows = [], [], [], []
-    pair_hits = {k: [] for k in METRIC_KEYS + ["overall"]}
-    for sid, rels in sorted(by_s.items()):
-        if len(rels) < 2:
-            continue
-        g_rank, g_cat = rank_releases({k: v["gt"] for k, v in rels.items()}, category_weights)
-        p_rank, p_cat = rank_releases({k: v["pred"] for k, v in rels.items()}, category_weights)
-        best_hits.append(g_rank[0] == p_rank[0])
-        exact_hits.append(g_rank == p_rank)
-        if len(rels) >= 3:
-            ids = sorted(rels)
-            t = kendalltau([g_cat[i]["overall"] for i in ids], [p_cat[i]["overall"] for i in ids])[0]
-            if not np.isnan(t):
-                taus.append(t)
-        for a, b in itertools.combinations(sorted(rels), 2):
-            for k in METRIC_KEYS:
-                dg = rels[a]["gt"][k] - rels[b]["gt"][k]
-                if abs(dg) > 0.05:
-                    pair_hits[k].append(np.sign(dg) == np.sign(rels[a]["pred"][k] - rels[b]["pred"][k]))
-            dg = g_cat[a]["overall"] - g_cat[b]["overall"]
-            if abs(dg) > 0.02:
-                pair_hits["overall"].append(np.sign(dg) == np.sign(p_cat[a]["overall"] - p_cat[b]["overall"]))
-        rows.append({"sample_id": sid, "gt_ranking": ">".join(g_rank), "pred_ranking": ">".join(p_rank),
-                     "gt_best": g_rank[0], "pred_best": p_rank[0], "best_correct": g_rank[0] == p_rank[0],
-                     **{f"gt_overall_{i}": g_cat[i]["overall"] for i in sorted(rels)},
-                     **{f"pred_overall_{i}": p_cat[i]["overall"] for i in sorted(rels)}})
-    res["ranking"] = {
-        "n_samples": len(best_hits),
-        "best_release_accuracy_RSA": float(np.mean(best_hits)) if best_hits else float("nan"),
-        "exact_ranking_accuracy": float(np.mean(exact_hits)) if exact_hits else float("nan"),
-        "mean_kendall_tau": float(np.mean(taus)) if taus else float("nan"),
-        "pairwise_preference_accuracy": {k: (float(np.mean(v)) if v else float("nan")) for k, v in pair_hits.items()},
-    }
-    res["ranking_rows"] = rows
+    res["ranking"], res["ranking_rows"] = ranking_metrics(records, category_weights)
 
     # ---------------- diagnostic audit
     err_rows = []
@@ -139,7 +146,10 @@ def evaluate(records: list, category_weights=None, top_error_threshold=0.30, gat
         sev_table[k] = {}
         for bname, (lo, hi) in buckets.items():
             es = [e["abs_error"] for e in err_rows if e["metric"] == k and lo <= e["gt"] < hi]
-            sev_table[k][bname] = {"n": len(es), "MAE": float(np.mean(es)) if es else float("nan")}
+            expected_count = sum(lo <= r["gt"][k] < hi for r in records)
+            sev_table[k][bname] = {"n": len(es), "n_expected": expected_count,
+                                 "valid_rate": len(es) / expected_count if expected_count else float("nan"),
+                                 "MAE": float(np.mean(es)) if es else float("nan")}
     res["error_by_severity"] = sev_table
     pattern = defaultdict(lambda: {"n": 0, "over": 0, "under": 0})
     for e in top:
@@ -150,11 +160,77 @@ def evaluate(records: list, category_weights=None, top_error_threshold=0.30, gat
         [{"metric": m, "template": t, **v, "direction": "over-scores (misses defect)" if v["over"] >= v["under"]
           else "under-scores (hallucinates defect)"} for (m, t), v in pattern.items()], key=lambda x: -x["n"])
     res["error_rows"] = err_rows
-    if any(r.get("kind") == "ladder" for r in valid):
-        res["ladder"] = ladder_sensitivity(valid, category_weights)
-        res["explanations"] = explanation_check(valid)
-    res["quality_gate"] = quality_gate(valid, gate_threshold)
+    if any(r.get("kind") == "ladder" for r in records):
+        res["ladder"] = ladder_sensitivity(records, category_weights)
+        res["explanations"] = explanation_check(records)
+    res["quality_gate"] = quality_gate(records, gate_threshold)
     return res
+
+
+def ranking_metrics(records, category_weights=None):
+    """Evaluate complete expected release groups, without filename tie-breaking credit.
+
+    Quality ordering remains (overall, technical), as in the product score engine. GT ties form
+    equivalence classes. Predicted best ties receive their fraction of GT-best members as credit;
+    a constant predictor therefore cannot receive automatic perfect selection accuracy.
+    """
+    by_sample = defaultdict(dict)
+    for row in records:
+        if row["release_id"] != "control_0":
+            by_sample[row["sample_id"]][row["release_id"]] = row
+    best, exact, taus, rows = [], [], [], []
+    pair_hits = {k: [] for k in METRIC_KEYS + ["overall"]}
+    pair_expected = dict.fromkeys(pair_hits, 0)
+    n_expected = 0
+    for sid, releases in sorted(by_sample.items()):
+        if len(releases) < 2:
+            continue
+        n_expected += 1
+        gt_rank, gt_cats = rank_releases({k: r["gt"] for k, r in releases.items()}, category_weights)
+        available = {k: r for k, r in releases.items() if r.get("pred") is not None}
+        pred_rank, pred_cats = rank_releases({k: r["pred"] for k, r in available.items()}, category_weights)
+        quality = lambda c: (c["overall"], c["technical"])
+        gt_best = {k for k in releases if quality(gt_cats[k]) == quality(gt_cats[gt_rank[0]])}
+        complete = len(available) == len(releases)
+        pred_best = {k for k in available if quality(pred_cats[k]) == quality(pred_cats[pred_rank[0]])} if available else set()
+        credit = len(gt_best & pred_best) / len(pred_best) if complete else 0.0
+        correctly_ordered = complete and all(
+            quality(gt_cats[a]) == quality(gt_cats[b]) or
+            (quality(gt_cats[a]) > quality(gt_cats[b])) == (quality(pred_cats[a]) > quality(pred_cats[b]))
+            and quality(pred_cats[a]) != quality(pred_cats[b])
+            for a, b in itertools.combinations(releases, 2))
+        if complete:
+            best.append(credit)
+            exact.append(bool(correctly_ordered))
+            if len(releases) >= 3:
+                ids = sorted(releases)
+                tau = _safe_corr(kendalltau, [gt_cats[k]["overall"] for k in ids], [pred_cats[k]["overall"] for k in ids])
+                if math.isfinite(tau):
+                    taus.append(tau)
+        for a, b in itertools.combinations(releases, 2):
+            for k in pair_hits:
+                dg = (gt_cats[a]["overall"] - gt_cats[b]["overall"]) if k == "overall" else releases[a]["gt"][k] - releases[b]["gt"][k]
+                if abs(dg) <= (0.02 if k == "overall" else 0.05):
+                    continue
+                pair_expected[k] += 1
+                if a in available and b in available:
+                    dp = (pred_cats[a]["overall"] - pred_cats[b]["overall"]) if k == "overall" else available[a]["pred"][k] - available[b]["pred"][k]
+                    pair_hits[k].append(bool(np.sign(dg) == np.sign(dp)))
+        rows.append({"sample_id": sid, "n_expected": len(releases), "n_valid": len(available), "complete": complete,
+                     "gt_ranking": ">".join(gt_rank), "pred_ranking": ">".join(pred_rank),
+                     "gt_best_set": ",".join(sorted(gt_best)), "pred_best_set": ",".join(sorted(pred_best)),
+                     "best_credit": credit, "exact_order_correct": bool(correctly_ordered)})
+    return {"n_samples": len(best), "n_samples_expected": n_expected, "n_samples_incomplete": n_expected - len(best),
+            "complete_group_rate": len(best) / n_expected if n_expected else float("nan"),
+            "best_release_accuracy_RSA": _mean(best),
+            "best_release_accuracy_end_to_end": sum(best) / n_expected if n_expected else float("nan"),
+            "exact_ranking_accuracy": _mean(exact),
+            "exact_ranking_accuracy_end_to_end": sum(exact) / n_expected if n_expected else float("nan"),
+            "mean_kendall_tau": _mean(taus), "n_kendall": len(taus),
+            "tie_policy": "quality=(overall,technical); GT equivalence classes; best-set intersection / predicted-best-set size",
+            "pairwise_preference_accuracy": {k: _mean(v) for k, v in pair_hits.items()},
+            "pairwise_preference_accuracy_end_to_end": {k: sum(pair_hits[k]) / pair_expected[k] if pair_expected[k] else float("nan") for k in pair_hits},
+            "pairwise_counts": {k: {"n_expected": pair_expected[k], "n_valid": len(pair_hits[k])} for k in pair_hits}}, rows
 
 
 KNOB_PRIMARY = {"font_family": "font_similarity", "font_size": "font_similarity", "font_color": "font_similarity",
@@ -166,29 +242,35 @@ KNOB_PRIMARY = {"font_family": "font_similarity", "font_size": "font_similarity"
 
 
 def quality_gate(records: list, threshold: float = 0.95) -> dict:
-    """Accept / reject decision a QA pipeline would make: reject a release when any metric < threshold.
-    Reports decision accuracy, rejection precision / recall, and - for correctly rejected releases - whether
-    the model blames the right metric (lowest predicted metric == lowest ground-truth metric), which is what
-    an automatic repair step would act on."""
+    """Valid-output confusion metrics plus end-to-end success, with abstentions explicit."""
     tp = fp = fn = tn = 0
     diag = []
-    for r in records:
-        if not r.get("pred"):
+    n_gt_reject = sum(min(r["gt"].values()) < threshold for r in records)
+    for row in records:
+        if row.get("pred") is None:
             continue
-        g_rej = min(r["gt"].values()) < threshold
-        p_rej = min(r["pred"].values()) < threshold
+        g_rej = min(row["gt"].values()) < threshold
+        p_rej = min(row["pred"].values()) < threshold
         tp += g_rej and p_rej
         fp += (not g_rej) and p_rej
         fn += g_rej and not p_rej
         tn += (not g_rej) and not p_rej
         if g_rej and p_rej:
-            diag.append(min(r["pred"], key=r["pred"].get) == min(r["gt"], key=r["gt"].get))
+            gmin, pmin = min(row["gt"].values()), min(row["pred"].values())
+            gt_worst = {k for k in METRIC_KEYS if row["gt"][k] == gmin}
+            pred_worst = {k for k in METRIC_KEYS if row["pred"][k] == pmin}
+            diag.append(len(gt_worst & pred_worst) / len(pred_worst))
     n = tp + fp + fn + tn
-    return {"threshold": threshold, "n": n, "decision_accuracy": (tp + tn) / n if n else float("nan"),
+    total = len(records)
+    return {"threshold": threshold, "n": n, "n_total": total, "n_abstained": total - n,
+            "decision_accuracy": (tp + tn) / n if n else float("nan"),
+            "decision_accuracy_end_to_end": (tp + tn) / total if total else float("nan"),
             "reject_precision": tp / (tp + fp) if tp + fp else float("nan"),
             "reject_recall": tp / (tp + fn) if tp + fn else float("nan"),
+            "reject_recall_end_to_end": tp / n_gt_reject if n_gt_reject else float("nan"),
             "false_reject_rate": fp / (fp + tn) if fp + tn else float("nan"),
-            "diagnosis_accuracy": float(np.mean(diag)) if diag else float("nan"),
+            "diagnosis_accuracy": _mean(diag), "n_diagnoses": len(diag),
+            "diagnosis_accuracy_end_to_end": sum(diag) / n_gt_reject if n_gt_reject else float("nan"),
             "confusion": {"tp": tp, "fp": fp, "fn": fn, "tn": tn}}
 
 
@@ -198,7 +280,7 @@ _NUM = re.compile(r"(-?\d+(?:\.\d+)?)\s*(px|%)")
 
 def _metric_line(text: str, metric: str):
     """The analysis line for a metric (lines are in METRIC_KEYS order, one per metric)."""
-    if not text or "<analysis>" not in text:
+    if not text or "<analysis>" not in text or "</analysis>" not in text:
         return None
     body = text.split("<analysis>", 1)[1].split("</analysis>", 1)[0]
     lines = [l.strip() for l in body.splitlines() if l.strip().startswith("-")]
@@ -206,105 +288,133 @@ def _metric_line(text: str, metric: str):
 
 
 def explanation_check(records: list) -> dict:
-    """Is the model's written reason TRUE? For ladder releases, compare the model's analysis line for the
-    edited metric with the ground-truth line: same location phrase (top/middle/bottom-left/right) and
-    the same measured quantity (px / %) within 25 % (or 1 unit)."""
-    loc_hits, num_hits, n_lines = [], [], 0
-    for r in records:
-        if r.get("kind") != "ladder" or r.get("artifact_type") in (None, "control") or not r.get("raw"):
+    """Count missing/invalid explanations as failures wherever ground truth is checkable."""
+    loc_hits, num_hits, loc_cond, num_cond = [], [], [], []
+    n_lines = eligible = missing_targets = 0
+    for row in records:
+        metric = row.get("primary_metric")
+        if row.get("kind") != "ladder" or row.get("artifact_type") in (None, "control") or metric not in METRIC_KEYS:
             continue
-        m = r["primary_metric"]
-        gl, pl = _metric_line(r.get("target", ""), m), _metric_line(r["raw"], m)
-        if gl is None or pl is None:
+        gt_line = _metric_line(row.get("target", ""), metric)
+        if gt_line is None:
+            missing_targets += 1
             continue
-        n_lines += 1
-        g_pos, p_pos = _POS.search(gl), _POS.search(pl)
+        eligible += 1
+        pred_line = _metric_line(row.get("raw"), metric) if row.get("pred") is not None else None
+        n_lines += pred_line is not None
+        g_pos = _POS.search(gt_line)
+        p_pos = _POS.search(pred_line) if pred_line else None
         if g_pos:
-            loc_hits.append(bool(p_pos) and p_pos.group(0) == g_pos.group(0))
-        g_num, p_num = _NUM.findall(gl.split("->")[0]), _NUM.findall(pl.split("->")[0])
+            hit = bool(p_pos) and p_pos.group(0) == g_pos.group(0)
+            loc_hits.append(hit)
+            if pred_line is not None:
+                loc_cond.append(hit)
+        g_num = _NUM.findall(gt_line.split("->")[0])
+        p_num = _NUM.findall(pred_line.split("->")[0]) if pred_line else []
         if g_num:
             gv, gu = float(g_num[0][0]), g_num[0][1]
-            same = [float(v) for v, u in p_num if u == gu]
-            num_hits.append(bool(same) and abs(same[0] - gv) <= max(1.0, 0.25 * abs(gv)))
-    return {"n_explanations": n_lines,
-            "location_accuracy": float(np.mean(loc_hits)) if loc_hits else float("nan"), "n_location": len(loc_hits),
-            "quantity_accuracy": float(np.mean(num_hits)) if num_hits else float("nan"), "n_quantity": len(num_hits)}
+            same = [float(v) for v, unit in p_num if unit == gu]
+            hit = bool(same) and abs(same[0] - gv) <= max(1.0, 0.25 * abs(gv))
+            num_hits.append(hit)
+            if pred_line is not None:
+                num_cond.append(hit)
+    return {"n_explanations": n_lines, "n_eligible": eligible, "n_missing_or_invalid": eligible - n_lines,
+            "n_missing_targets": missing_targets, "explanation_coverage": n_lines / eligible if eligible else float("nan"),
+            "location_accuracy": _mean(loc_hits), "n_location": len(loc_hits),
+            "quantity_accuracy": _mean(num_hits), "n_quantity": len(num_hits),
+            "location_accuracy_given_explanation": _mean(loc_cond),
+            "quantity_accuracy_given_explanation": _mean(num_cond)}
 
 
 def ladder_sensitivity(records: list, category_weights=None, false_alarm_below=0.98) -> dict:
-    """Minute-change sensitivity on ladder samples (1 control + 6 knobs x 4 levels per Original).
+    """Detection requires both a valid release and that Original's valid unchanged control.
 
-    detection rate  - share of releases whose predicted primary-metric score is LOWER than the model's own
-                      prediction for the unchanged control of the same Original (model-relative, so a model
-                      that is biased low everywhere gets no credit);
-    JND             - smallest level of an ordinal knob detected in >= 50% of Originals;
-    monotonicity    - per Original, Spearman(level, predicted primary score); -1 = perfectly ordered;
-    false alarms    - controls where any metric is predicted below `false_alarm_below` (images are identical)."""
+    Conditional rates use available comparisons. End-to-end rates and JND use all expected
+    releases, so dropping controls or difficult predictions cannot improve reported sensitivity.
+    """
     by_s = defaultdict(dict)
-    for r in records:
-        if r.get("kind") == "ladder":
-            by_s[r["sample_id"]][r["release_id"]] = r
+    for row in records:
+        if row.get("kind") == "ladder":
+            by_s[row["sample_id"]][row["release_id"]] = row
     per, controls = {}, []
+    n_expected_controls = 0
     for rels in by_s.values():
         c = rels.get("control_0")
-        if c:
+        n_expected_controls += c is not None
+        valid_control = c is not None and c.get("pred") is not None
+        if valid_control:
             controls.append(c)
-        for rid, r in rels.items():
-            if rid == "control_0":
+        for rid, row in rels.items():
+            if rid == "control_0" or row.get("primary_metric") not in METRIC_KEYS:
                 continue
-            m = r["primary_metric"]
-            ref = c["pred"][m] if c else 1.0
-            ref_overall = category_scores(c["pred"], category_weights)["overall"] if c else 1.0
-            p = per.setdefault(rid, {"artifact_type": r["artifact_type"], "level": r["level"],
-                                     "value": r.get("artifact_value"), "primary_metric": m, "gt": [], "pred": [],
-                                     "det": [], "det_overall": []})
-            p["gt"].append(r["gt"][m])
-            p["pred"].append(r["pred"][m])
-            p["det"].append(r["pred"][m] < ref - 1e-9)
-            p["det_overall"].append(category_scores(r["pred"], category_weights)["overall"] < ref_overall - 1e-9)
+            metric = row["primary_metric"]
+            point = per.setdefault(rid, {"artifact_type": row["artifact_type"], "level": row["level"],
+                "value": row.get("artifact_value"), "primary_metric": metric, "gt": [], "pred": [],
+                "valid_gt": [], "det": [], "det_overall": [], "n_missing_controls": 0})
+            point["gt"].append(row["gt"][metric])
+            if not valid_control:
+                point["n_missing_controls"] += 1
+            if row.get("pred") is None:
+                continue
+            point["pred"].append(row["pred"][metric])
+            point["valid_gt"].append(row["gt"][metric])
+            if valid_control:
+                point["det"].append(row["pred"][metric] < c["pred"][metric] - 1e-9)
+                point["det_overall"].append(category_scores(row["pred"], category_weights)["overall"]
+                    < category_scores(c["pred"], category_weights)["overall"] - 1e-9)
     rows = []
-    for rid, p in sorted(per.items(), key=lambda kv: (kv[1]["artifact_type"], kv[1]["level"])):
-        gt, pr = np.array(p["gt"]), np.array(p["pred"])
-        rows.append({"release_id": rid, "artifact_type": p["artifact_type"], "level": p["level"], "value": p["value"],
-                     "primary_metric": p["primary_metric"], "n": len(gt), "gt_mean": float(gt.mean()),
-                     "pred_mean": float(pr.mean()), "MAE": float(np.mean(np.abs(gt - pr))),
-                     "detection_rate": float(np.mean(p["det"])), "overall_detection_rate": float(np.mean(p["det_overall"]))})
+    for rid, point in sorted(per.items(), key=lambda item: (item[1]["artifact_type"], item[1]["level"])):
+        n = len(point["gt"])
+        rows.append({"release_id": rid, **{k: point[k] for k in ("artifact_type", "level", "value", "primary_metric")},
+            "n": n, "n_valid": len(point["pred"]), "n_compared": len(point["det"]),
+            "n_missing_controls": point["n_missing_controls"], "gt_mean": _mean(point["gt"]),
+            "pred_mean": _mean(point["pred"]),
+            "MAE": _mean([abs(g - p) for g, p in zip(point["valid_gt"], point["pred"])]),
+            "detection_rate": _mean(point["det"]), "overall_detection_rate": _mean(point["det_overall"]),
+            "detection_rate_end_to_end": sum(point["det"]) / n,
+            "overall_detection_rate_end_to_end": sum(point["det_overall"]) / n})
     jnd, mono = {}, {}
-    for knob in sorted({r["artifact_type"] for r in rows}):
-        lv = sorted((r for r in rows if r["artifact_type"] == knob), key=lambda r: r["level"])
-        if knob == "font_family":  # nominal levels: no JND / ordering
+    for knob in sorted({row["artifact_type"] for row in rows}):
+        if knob == "font_family":
             continue
-        hit = [r for r in lv if r["detection_rate"] >= 0.5]
-        jnd[knob] = {"level": hit[0]["level"], "value": hit[0]["value"]} if hit else None
-        rhos = []
+        levels = sorted((row for row in rows if row["artifact_type"] == knob), key=lambda row: row["level"])
+        detected = [row for row in levels if row["detection_rate_end_to_end"] >= 0.5]
+        jnd[knob] = {"level": detected[0]["level"], "value": detected[0]["value"]} if detected else None
+        correlations, n_flat, n_incomplete = [], 0, 0
         for rels in by_s.values():
-            pts = sorted((r["level"], r["pred"][r["primary_metric"]]) for r in rels.values() if r.get("artifact_type") == knob)
-            if len(pts) >= 3 and np.std([q for _, q in pts]) > 1e-9:
-                rhos.append(spearmanr([l for l, _ in pts], [q for _, q in pts])[0])
-        mono[knob] = {"mean_spearman": float(np.mean(rhos)) if rhos else float("nan"), "n_with_variation": len(rhos),
-                      "n_flat": len(by_s) - len(rhos)}
-    fa = [any(c["pred"][k] < false_alarm_below for k in METRIC_KEYS) for c in controls]
-
-    # cross-metric leakage: how much each single-factor edit moves EVERY metric (pred minus own control).
-    # A precise judge moves only the edited metric; mass on other metrics = confusing one defect for another.
+            expected = [row for row in rels.values() if row.get("artifact_type") == knob]
+            if not expected:
+                continue
+            if len(expected) < 3 or any(row.get("pred") is None for row in expected):
+                n_incomplete += 1
+                continue
+            pts = sorted((row["level"], row["pred"][row["primary_metric"]]) for row in expected)
+            if np.std([score for _, score in pts]) <= 1e-9:
+                n_flat += 1
+            else:
+                correlations.append(float(spearmanr([level for level, _ in pts], [score for _, score in pts])[0]))
+        mono[knob] = {"mean_spearman": _mean(correlations), "n_with_variation": len(correlations),
+                      "n_flat": n_flat, "n_incomplete": n_incomplete}
     leak = defaultdict(lambda: defaultdict(list))
     for rels in by_s.values():
         c = rels.get("control_0")
-        if not c:
+        if c is None or c.get("pred") is None:
             continue
-        for rid, r in rels.items():
-            if rid != "control_0":
-                for k in METRIC_KEYS:
-                    leak[r["artifact_type"]][k].append(r["pred"][k] - c["pred"][k])
-    leakage = {knob: {k: float(np.mean(v)) for k, v in ks.items()} for knob, ks in leak.items()}
+        for rid, row in rels.items():
+            if rid != "control_0" and row.get("pred") is not None:
+                for key in METRIC_KEYS:
+                    leak[row["artifact_type"]][key].append(row["pred"][key] - c["pred"][key])
+    leakage = {knob: {key: _mean(values) for key, values in keys.items()} for knob, keys in leak.items()}
     precision = {}
-    for knob, d in leakage.items():
-        prim = KNOB_PRIMARY.get(knob)
-        drops = {k: max(0.0, -v) for k, v in d.items()}
-        tot = sum(drops.values())
-        precision[knob] = (drops.get(prim, 0.0) / tot) if tot > 1e-9 else float("nan")
+    for knob, deltas in leakage.items():
+        drops = {key: max(0.0, -value) for key, value in deltas.items()}
+        total = sum(drops.values())
+        precision[knob] = drops.get(KNOB_PRIMARY.get(knob), 0.0) / total if total > 1e-9 else float("nan")
+    fa = [any(c["pred"][key] < false_alarm_below for key in METRIC_KEYS) for c in controls]
     return {"n_originals": len(by_s), "rows": rows, "jnd": jnd, "monotonicity": mono,
+            "jnd_denominator": "all expected releases; missing or invalid comparisons count as failures",
             "leakage": leakage, "attribution_precision": precision,
-            "control": {"n": len(controls), "false_alarm_rate": float(np.mean(fa)) if fa else float("nan"),
-                        "mean_pred_overall": float(np.mean([category_scores(c["pred"], category_weights)["overall"]
-                                                            for c in controls])) if controls else float("nan")}}
+            "control": {"n": len(controls), "n_expected": n_expected_controls,
+                        "n_originals_without_valid_control": len(by_s) - len(controls),
+                        "false_alarm_rate": _mean(fa),
+                        "mean_pred_overall": _mean([category_scores(c["pred"], category_weights)["overall"] for c in controls])}}
