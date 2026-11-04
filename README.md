@@ -1,6 +1,6 @@
 # Samsung PRISM 26VI05 - VLM image-quality evaluation pipeline (English)
 
-> This is the improved `codex/phi35-model-modified` branch. Start with
+> This is the improved `phi35-model-modified` branch. Start with
 > [MODIFIED_PIPELINE.md](MODIFIED_PIPELINE.md) for the current run instructions,
 > shared pipeline fixes, verification evidence and remaining GPU checks.
 

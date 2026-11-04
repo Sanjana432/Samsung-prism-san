@@ -1,6 +1,6 @@
 # PRISM comparison: Phi-3.5 Vision
 
-> This is the improved `codex/phi35-model-modified` branch. Start with
+> This is the improved `phi35-model-modified` branch. Start with
 > [MODIFIED_PIPELINE.md](MODIFIED_PIPELINE.md) for the current run instructions,
 > shared pipeline fixes, verification evidence and remaining GPU checks.
 
@@ -35,8 +35,8 @@ This improved branch also adds shared data, checkpoint, prediction and evaluatio
 
 ## Access and run
 
-1. [Open this branch in GitHub](https://github.com/Sanjana432/Samsung-prism-san/tree/codex/phi35-model-modified)
-   or [open its notebook in Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/phi35-model-modified/colab_run_pipeline.ipynb).
+1. [Open this branch in GitHub](https://github.com/Sanjana432/Samsung-prism-san/tree/phi35-model-modified)
+   or [open its notebook in Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/phi35-model-modified/colab_run_pipeline.ipynb).
 2. Choose a GPU runtime. The notebook clones this branch into `MyDrive/prism_ladder_phi35_modified`,
    keeping weights, adapters, predictions and reports separate from the other model versions.
 3. Copy the team's identical `data/` folder (images, metadata and splits) into that workspace
