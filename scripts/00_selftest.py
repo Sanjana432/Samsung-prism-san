@@ -33,8 +33,8 @@ def check(cond, msg):
         FAIL.append(msg)
 
 
-def main():
-    cfg = load_config()
+def main(config=None):
+    cfg = load_config(config)
     print("[1] renderer identity")
     for t in TEMPLATES:
         d = build_document(t, 7)
@@ -194,4 +194,7 @@ def _dummy_details():
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config")
+    main(parser.parse_args().config)
