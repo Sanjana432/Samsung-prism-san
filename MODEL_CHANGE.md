@@ -1,7 +1,7 @@
 # PRISM model branch: Google Gemma4 E2B
 
 Model: [`google/gemma-4-E2B-it`](https://huggingface.co/google/gemma-4-E2B-it), Apache-2.0.
-Branch: `codex/gemma4-model`. This is a distinct Gemma architecture, independent of Qwen.
+Branch: `gemma4-model`. This is a distinct Gemma architecture, independent of Qwen.
 
 Gemma4 supports interleaved image pairs and native system instructions. The E2B version is a
 resource-conscious candidate from the current Google model family. Its published name means
@@ -32,8 +32,8 @@ earlier local website are separate from this model integration.
 
 ## Access and run
 
-1. [Open this branch in GitHub](https://github.com/Sanjana432/Samsung-prism-san/tree/codex/gemma4-model).
-2. [Open its notebook in Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/gemma4-model/colab_run_pipeline.ipynb).
+1. [Open this branch in GitHub](https://github.com/Sanjana432/Samsung-prism-san/tree/gemma4-model).
+2. [Open its notebook in Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/gemma4-model/colab_run_pipeline.ipynb).
 3. Select a GPU runtime, then run setup. This branch uses `MyDrive/prism_ladder_gemma4`, so adapters,
    predictions and checkpoints cannot accidentally resume a different model's run.
 4. Copy the team's shared `data/` directory with original/release images, metadata and exact split
