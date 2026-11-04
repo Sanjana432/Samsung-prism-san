@@ -8,8 +8,8 @@ import os
 import yaml
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# SmolVLM2 processor/tokenizer files. Weights may be a single safetensors file or indexed shards.
-MODEL_FILES = ["config.json", "preprocessor_config.json", "processor_config.json",
+# Gemma4 bundles image/audio processor settings in processor_config.json.
+MODEL_FILES = ["config.json", "processor_config.json",
                "tokenizer.json", "tokenizer_config.json"]
 
 
@@ -34,14 +34,14 @@ def check_model_dir(d: str) -> None:
     config = os.path.join(d, "config.json")
     if os.path.isfile(config):
         with open(config) as f:
-            if json.load(f).get("model_type") != "smolvlm":
-                raise SystemExit(f"model folder {d} is not a SmolVLM checkpoint; use SmolVLM2-2.2B-Instruct")
-    template = os.path.join(d, "chat_template.json")
+            if json.load(f).get("model_type") != "gemma4":
+                raise SystemExit(f"model folder {d} is not a Gemma4 checkpoint; use gemma-4-E2B-it")
+    template = os.path.join(d, "chat_template.jinja")
     tokenizer_config = os.path.join(d, "tokenizer_config.json")
     if not os.path.isfile(template) and os.path.isfile(tokenizer_config):
         with open(tokenizer_config) as f:
             if not json.load(f).get("chat_template"):
-                missing.append("chat_template.json (or chat_template in tokenizer_config.json)")
+                missing.append("chat_template.jinja (or chat_template in tokenizer_config.json)")
     index = os.path.join(d, "model.safetensors.index.json")
     if os.path.isfile(index):
         with open(index) as f:

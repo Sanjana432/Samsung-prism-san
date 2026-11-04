@@ -1,6 +1,6 @@
 """Stage 4 - QLoRA supervised fine-tuning (GPU).
 
-SmolVLM2-2.2B-Instruct in 4-bit NF4 + LoRA (r16 / alpha32 / dropout .05 / all-linear), TRL SFTTrainer,
+Gemma4 E2B in 4-bit NF4 + LoRA (r16 / alpha32 / dropout .05 / all-linear), TRL SFTTrainer,
 cosine LR, warmup, gradient accumulation. Loss is computed ONLY on the assistant answer
 (<analysis> CoT + JSON). Image tokens are never truncated: a sequence longer than max_seq_len aborts.
 
@@ -23,14 +23,14 @@ import sys
 import numpy as np
 import torch
 from datasets import Dataset
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from peft import LoraConfig, get_peft_model
 from transformers import TrainerCallback, set_seed
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from prism.common import P, abspath, load_config, read_jsonl  # noqa: E402
 from prism.metrics import METRIC_KEYS  # noqa: E402
 from prism.prompts import PROMPTS, TRAIN_PROMPT  # noqa: E402
-from prism.vlm import VLMClass, assistant_marker, bnb_config, compute_dtype, encode_pairs, load_processor, predict  # noqa: E402
+from prism.vlm import VLMClass, assistant_marker, bnb_config, compute_dtype, encode_pairs, load_processor, predict, prepare_training_model  # noqa: E402
 
 
 class Collator:
@@ -50,7 +50,7 @@ class Collator:
         enc = encode_pairs(self.proc, batch, PROMPTS[TRAIN_PROMPT], [b["target"] for b in batch], padding_side="right")
         if enc["input_ids"].shape[1] > self.max_len:
             raise RuntimeError(f"sequence length {enc['input_ids'].shape[1]} > max_seq_len {self.max_len}; "
-                               "raise model.max_seq_len or lower model.image_longest_edge (never truncate image tokens)")
+                               "raise model.max_seq_len or lower model.max_soft_tokens (never truncate image tokens)")
         labels = enc["input_ids"].clone()
         labels[enc["attention_mask"] == 0] = -100
         for i, ids in enumerate(enc["input_ids"].tolist()):
@@ -124,11 +124,10 @@ def main():
     val_gen = val_sorted[: tc["val_generation_subset"]]
 
     proc = load_processor(cfg, padding_side="right")
-    model = VLMClass.from_pretrained(cfg["model"]["base"], quantization_config=bnb_config(cfg), torch_dtype=compute_dtype(),
+    model = VLMClass.from_pretrained(cfg["model"]["base"], quantization_config=bnb_config(cfg), dtype=compute_dtype(),
                                      device_map="auto", attn_implementation="sdpa")
     model.config.use_cache = False
-    model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=tc["gradient_checkpointing"],
-                                            gradient_checkpointing_kwargs={"use_reentrant": False})
+    model = prepare_training_model(model, cfg)
     model = get_peft_model(model, LoraConfig(r=q["r"], lora_alpha=q["alpha"], lora_dropout=q["dropout"],
                                              target_modules=q["target_modules"], bias="none", task_type="CAUSAL_LM"))
     model.print_trainable_parameters()

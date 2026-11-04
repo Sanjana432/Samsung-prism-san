@@ -9,7 +9,7 @@ import time
 
 import torch
 from PIL import Image
-from transformers import AutoProcessor, BitsAndBytesConfig, SmolVLMForConditionalGeneration as VLMClass
+from transformers import AutoProcessor, BitsAndBytesConfig, Gemma4ForConditionalGeneration as VLMClass
 
 from .common import abspath
 from .prompts import PROMPTS, RETRY, build_messages
@@ -28,10 +28,7 @@ def compute_dtype():
 def load_processor(cfg, padding_side="left"):
     m = cfg["model"]
     proc = AutoProcessor.from_pretrained(m["base"])
-    # Set both copies: SmolVLM caches the image size at construction. Passing `size` to
-    # AutoProcessor also puts it in tokenizer init_kwargs in 4.51.3, causing duplicate kwargs.
-    proc.image_processor.size = {"longest_edge": m["image_longest_edge"]}
-    proc.image_size = proc.image_processor.size
+    proc.image_processor.max_soft_tokens = m["max_soft_tokens"]
     proc.tokenizer.padding_side = padding_side
     return proc
 
@@ -39,8 +36,8 @@ def load_processor(cfg, padding_side="left"):
 def assistant_marker(proc):
     """Derive the answer header from this checkpoint's template, rather than a Qwen token literal."""
     conversation = [{"role": "user", "content": [{"type": "text", "text": ""}]}]
-    before = proc.apply_chat_template(conversation, tokenize=False, add_generation_prompt=False)
-    after = proc.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True)
+    before = proc.apply_chat_template(conversation, tokenize=False, add_generation_prompt=False, enable_thinking=False)
+    after = proc.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True, enable_thinking=False)
     if not after.startswith(before):
         raise ValueError("chat template does not append an assistant generation header")
     marker = proc.tokenizer.encode(after[len(before):], add_special_tokens=False)
@@ -50,7 +47,7 @@ def assistant_marker(proc):
 
 
 def encode_pairs(proc, items, prompt, targets=None, padding_side="left"):
-    """Keep each Original/Release together: SmolVLM expects a nested image list per conversation.
+    """Keep each Original/Release together in Gemma's nested image list per conversation.
 
     Prompt wording, image order and training targets are the same as in the Qwen experiment.
     Only the checkpoint's chat template and native image processor change.
@@ -67,11 +64,13 @@ def encode_pairs(proc, items, prompt, targets=None, padding_side="left"):
             with Image.open(path) as image:
                 pair.append(image.convert("RGB"))
         images.append(pair)
-    texts = [proc.apply_chat_template(m, tokenize=False, add_generation_prompt=targets is None) for m in messages]
+    texts = [proc.apply_chat_template(m, tokenize=False, add_generation_prompt=targets is None,
+                                     enable_thinking=False) for m in messages]
     old = proc.tokenizer.padding_side
     try:
         proc.tokenizer.padding_side = padding_side
-        return proc(text=texts, images=images, padding=True, truncation=False, return_tensors="pt")
+        return proc(text=texts, images=images, padding=True, truncation=False, return_tensors="pt",
+                    add_special_tokens=False)
     finally:
         proc.tokenizer.padding_side = old
 
@@ -82,11 +81,29 @@ def bnb_config(cfg):
                               bnb_4bit_use_double_quant=q["double_quant"], bnb_4bit_compute_dtype=compute_dtype())
 
 
+def prepare_training_model(model, cfg):
+    """Prepare NF4+LoRA without ever upcasting Gemma4's large frozen lookup tables.
+
+    Mirror PEFT's freezing, fp32 nonquantized parameters and non-reentrant checkpointing,
+    excluding embedding parameters (including tied references) from the blanket fp32 cast.
+    Avoiding the cast upfront prevents a temporary fp32 table allocation on limited GPUs.
+    """
+    embedding_ids = {id(module.weight) for module in model.modules() if isinstance(module, torch.nn.Embedding)}
+    for param in model.parameters():
+        param.requires_grad_(False)
+        if (id(param) not in embedding_ids and param.dtype in (torch.float16, torch.bfloat16)
+                and param.__class__.__name__ != "Params4bit"):
+            param.data = param.data.to(torch.float32)
+    if cfg["train"]["gradient_checkpointing"]:
+        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+    return model
+
+
 def load_model(cfg, adapter: str | None = None):
     if not torch.cuda.is_available():
         raise SystemExit("A CUDA GPU is required for model stages (03/04/05). See README - 'No GPU?'.")
     model = VLMClass.from_pretrained(cfg["model"]["base"], quantization_config=bnb_config(cfg),
-                                     torch_dtype=compute_dtype(), device_map="auto", attn_implementation="sdpa")
+                                     dtype=compute_dtype(), device_map="auto", attn_implementation="sdpa")
     if adapter:
         from peft import PeftModel
         model = PeftModel.from_pretrained(model, adapter)

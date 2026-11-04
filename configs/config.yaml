@@ -47,12 +47,12 @@ splits:
                                 # (never seen in training) -> measures generalisation to unseen document types
 
 model:
-  # Independent SmolLM2 + SigLIP model family; native Transformers support, Apache-2.0.
-  # 4-bit NF4 + fp16/SDPA on a free Colab T4. Run gpu_smoke_test.py before long jobs.
-  base: HuggingFaceTB/SmolVLM2-2.2B-Instruct
-  local_dir: models/SmolVLM2-2.2B-Instruct   # if this folder exists it is used instead of downloading `base`
+  # Google Gemma4 E2B, Apache-2.0. 2.3B effective / 5.1B total including embeddings.
+  # Actual T4 memory fit must be checked by gpu_smoke_test.py; fp16/SDPA, NF4 weights.
+  base: google/gemma-4-E2B-it
+  local_dir: models/gemma-4-E2B-it   # if this folder exists it is used instead of downloading `base`
                                 # (relative to the project root, or an absolute path; works offline)
-  image_longest_edge: 1152      # SmolVLM native 384 px tiles + overview; Colab uses 768 on <20 GB GPUs
+  max_soft_tokens: 280          # native per-image patch budget; retain minute-detail input on T4
   max_seq_len: 4096             # sequences are NEVER truncated; longer ones abort with an error
 
 qlora:

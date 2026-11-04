@@ -1,97 +1,81 @@
-# Sanjana's PRISM model comparison: SmolVLM2
+# PRISM model branch: Google Gemma4 E2B
 
-This branch replaces the Qwen2.5-VL-3B integration with
-[`HuggingFaceTB/SmolVLM2-2.2B-Instruct`](https://huggingface.co/HuggingFaceTB/SmolVLM2-2.2B-Instruct).
-It keeps the team's experiment and evaluation pipeline in place.
+Model: [`google/gemma-4-E2B-it`](https://huggingface.co/google/gemma-4-E2B-it), Apache-2.0.
+Branch: `codex/gemma4-model`. This is a distinct Gemma architecture, independent of Qwen.
 
-## Why this model
+Gemma4 supports interleaved image pairs and native system instructions. The E2B version is a
+resource-conscious candidate from the current Google model family. Its published name means
+approximately 2.3B effective parameters, **5.1B total including embeddings**. It is not a 2B-memory model.
+No ranking against the other PRISM models is claimed before the shared dataset is evaluated.
 
-- It is an Apache-2.0 model with a SmolLM2 language decoder and SigLIP vision encoder, providing
-  a model family independent of Qwen for the team comparison.
-- It accepts multiple images in one conversation and has native support in the repository's
-  existing `transformers==4.51.3`, including PEFT/LoRA training.
-- Its 2.2B size makes it a practical candidate for limited-memory Colab GPUs. The integration
-  retains 4-bit NF4/double quantization, native fp16 on T4 and SDPA attention; FlashAttention is not required.
-- This is a choice based on architecture, features and resource constraints. It is not a claim
-  that SmolVLM2 outperforms Qwen, or that its minute-change accuracy has already been measured.
+## What changes
 
-## Exact change scope
+- `configs/config.yaml`: Gemma4 checkpoint/local directory and native per-image soft-token budget.
+- `prism/vlm.py`: native Gemma4 loader/processor, nested original-release images, native assistant
+  header, and `enable_thinking=False`. The existing P4 observation instructions are retained.
+- Training collator: mask prompt, padding and visual tokens using Gemma's own token IDs.
+- Training preparation: PEFT casts frozen unquantized lookup tables to fp32 by default; this branch
+  performs the equivalent freezing, nonquantized-parameter upcast and non-reentrant checkpointing
+  while excluding `nn.Embedding` weights and tied references from that cast in the first place.
+  This avoids both persistent and transient fp32 allocations for the large per-layer/input tables.
+  Layer norms retain PEFT's fp32 treatment.
+  The same helper is used in the real training stage and GPU smoke test.
+- `prism/common.py`: Gemma4's combined processor configuration, Jinja chat template, and single/sharded weights.
+- Model dependencies: Transformers 5.17.0, PEFT 0.21.0, TRL 1.13.0 and native torchvision processing.
+  These newer APIs are required by Gemma4; the original TRL path and Trainer fallback are retained.
+- Colab notebook and model notes identify the correct model branch and separate Drive workspace.
 
-| File | Model-related change |
-|---|---|
-| `configs/config.yaml` | SmolVLM2 model ID, separate local checkpoint directory, native image-size setting |
-| `prism/vlm.py` | Native model class, paired-image processing, template-derived assistant header, floating-point vision input dtype |
-| `scripts/04_train_qlora.py` | Use the shared SmolVLM pair encoder and native assistant/image label mask |
-| `prism/common.py` | Validate SmolVLM local checkpoint files; allow single or sharded safetensors weights |
-| `requirements.txt` | Replace `qwen-vl-utils` with the SmolVLM processor's `num2words` dependency |
-| `colab_run_pipeline.ipynb` | Clone this model branch into its own Drive workspace and use SmolVLM T4 image settings |
-| `scripts/gpu_smoke_test.py` | Update the model-specific image-size recommendation |
-| `tests/test_smolvlm.py` | Integration regression checks |
-| `README.md`, `PIPELINE.md`, this file | Model identification and run instructions |
+Generation, templates, the 24-release ladder, measured labels, P1-P4 wording, split assignment,
+metric definitions, QLoRA r/alpha/dropout/all-linear targets, optimizer schedule, checkpoint selection,
+validation retry rules, scoring and evaluation calculations stay the same. The other branches and
+earlier local website are separate from this model integration.
 
-The renderer, all 23 templates, 24-release ladder, measured ground truth, metric definitions,
-P1-P4 prompt text, target text, split assignment, QLoRA r/alpha/dropout/target modules, optimization,
-checkpoint selection, validation gate/retry rules, ranking and evaluation calculations are unchanged.
-No website files are present in this upstream repository; the earlier local PRISM site is unchanged.
+## Access and run
 
-## Run on Colab
+1. [Open this branch in GitHub](https://github.com/Sanjana432/Samsung-prism-san/tree/codex/gemma4-model).
+2. [Open its notebook in Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/gemma4-model/colab_run_pipeline.ipynb).
+3. Select a GPU runtime, then run setup. This branch uses `MyDrive/prism_ladder_gemma4`, so adapters,
+   predictions and checkpoints cannot accidentally resume a different model's run.
+4. Copy the team's shared `data/` directory with original/release images, metadata and exact split
+   files into this workspace before dataset cells. Do not copy another model's outputs/predictions.
+   The unchanged generator remains available when the shared dataset has not yet been generated.
+5. Run `scripts/gpu_smoke_test.py` before long jobs. It runs real inference, checks the label mask,
+   runs one 4-bit LoRA training step and reports peak GPU memory. Colab sets inference batch size 1
+   below 20 GB; the native 280-soft-token per-image budget is retained.
+6. Run the existing baseline, QLoRA, inference and evaluation stages. Compare the same test sample IDs
+   and split membership across branches. Record native model preprocessing alongside results.
 
-1. [Open the model branch's notebook in Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/smolvlm2-model/colab_run_pipeline.ipynb).
-2. Select a GPU runtime. The setup downloads this branch into
-   `MyDrive/prism_ladder_smolvlm2`, separate from the Qwen experiment's `prism_ladder` folder.
-3. Run the setup cells. On GPUs below 20 GB the notebook sets
-   `model.image_longest_edge: 768` and `inference.batch_size: 2`.
-4. Use the **same original images, generated releases, metadata and split files** as the team's
-   Qwen comparison. Copy the existing `data/` directory into this model workspace before running
-   the dataset cells when it is already available. Do not copy Qwen's `outputs/`, `predictions/`
-   or model-specific reports. Dataset generation is still available, with the same seed and code,
-   if the team has not generated its shared dataset yet.
-5. Run `scripts/gpu_smoke_test.py` before the long model stages. It checks native processor input,
-   answer masking, inference, one real 4-bit LoRA forward/backward step and peak GPU memory.
-   If it runs out of memory, reduce inference batch size to 1 first; reducing image resolution
-   can remove the minute discrepancies being studied and must be recorded in the comparison.
-6. Run the existing prompt study/baseline, training, inference and evaluation cells. Stage names,
-   output formats and the 12 quality metrics remain the same.
-
-For a fair cross-model comparison, match the sample IDs, train/validation/test membership, prompts
-and scoring rules, and record the model's preprocessing and training settings. The model's own
-tiling is different from Qwen's pixel-budget processor; there is no added crop, detector or scoring aid.
+NF4 quantization applies to linear weights, not lookup tables. CUDA training memory also includes
+vision activations, gradients, adapters and optimizer state. Preserving frozen embedding dtype
+reduces one important cost, but **full pretrained T4 inference/training memory fit remains unverified**.
+If a T4 still runs out of memory, use a larger GPU or record any lower vision budget explicitly;
+reducing resolution can hide the minute discrepancies being studied.
 
 ## Verification
 
-Verified locally on 4 November 2026: **13/13 integration tests passed** with the actual public
-processor files and `transformers==4.51.3`, `peft==0.15.2`, `trl==0.17.0` (CPU PyTorch 2.14.0).
-All 31 Python source files parse, the notebook JSON is valid, `git diff --check` passes and all
-non-model configuration sections match the original commit `1ae046558905c0bba20198ea077fec2cb0ffc627`.
-The unchanged repository CPU self-test passed, with the saved-dataset report test skipped as below.
+Verified on 4 November 2026: **15/15 integration tests passed**, including native processor/mask
+checks, a real 768×1024 rendered pair with the complete 12-line target (**1,285/4,096 tokens**),
+tiny Gemma4 forward/backward and adapter reload, and one actual TRL SFTTrainer optimizer step.
+The CPU environment used Transformers 5.17.0, PEFT 0.21.0, TRL 1.13.0, PyTorch 2.14.0 and
+torchvision 0.29.0. All non-model configuration sections match the original upstream commit.
 
-The integration suite uses the real public tokenizer, chat template and image processor, and a
-tiny randomly initialized instance of the actual SmolVLM architecture for CPU training checks.
-It does not use or measure the full pretrained checkpoint.
-
-```bash
-python -m unittest discover -s tests -v
-```
-
-Set `SMOLVLM_PROCESSOR_DIR` to a local copy of the model's processor/tokenizer files to enable all
-native-processor tests. Without it, those tests are explicitly skipped. No model weights are needed:
+Run `python -m unittest discover -s tests -v`. Set `GEMMA4_PROCESSOR_DIR` to a local copy of the
+public processor files to enable native processor tests:
 
 ```python
 import os
 from huggingface_hub import snapshot_download
-os.environ['SMOLVLM_PROCESSOR_DIR'] = snapshot_download(
-    'HuggingFaceTB/SmolVLM2-2.2B-Instruct', allow_patterns=['*.json', '*.txt', '*.model'])
+os.environ['GEMMA4_PROCESSOR_DIR'] = snapshot_download(
+    'google/gemma-4-E2B-it', allow_patterns=['*.json', '*.jinja', '*.txt', '*.model'])
 ```
 
-Then launch the unittest command in the same environment. The repository's unchanged CPU self-test is:
+The tests check real paired-image processing, unchanged prompt text, inference-only decoding,
+assistant/image/padding masks, overlength rejection, prediction retry/resume, local checkpoint
+validation, frozen embedding dtype preservation, and forward/backward + adapter reload through
+a tiny randomly initialized instance of the actual Gemma4 architecture. The latter uses a compact
+test vocabulary to avoid allocating full 262K-vocabulary logits; native vocabulary processing is
+checked separately. These are integration checks, not measurements of pretrained model accuracy.
 
-```bash
-python scripts/00_selftest.py
-```
-
-The CPU self-test covers all 23 template identity checks, measured-score fidelity, the validation
-gate, score engine and 3 complete 24-release ladders. Its saved-dataset report test is skipped
-when `data/pairs/test.jsonl` has not been generated. These are software checks, not model results.
-
-Full pretrained inference, 4-bit CUDA memory use, full QLoRA training and benchmark accuracy must
-still be verified on the Colab GPU. No accuracy figures or trained adapter are supplied by this change.
+Run the unchanged `python scripts/00_selftest.py` for renderer and deterministic scoring checks.
+Full pretrained GPU inference, QLoRA training, accuracy and minute-change detection thresholds
+must be measured on the actual Colab GPU and shared test set.

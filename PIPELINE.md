@@ -105,10 +105,12 @@ Base model untouched (4-bit), on a fixed seeded subset of **validation** (`promp
 Selected prompt on the full **test** split -> `predictions/baseline_zero_shot_test.jsonl`.
 
 ## [6] QLoRA fine-tuning - `scripts/04_train_qlora.py`
-- **Model**: `HuggingFaceTB/SmolVLM2-2.2B-Instruct`, bitsandbytes **4-bit NF4, double quant**, compute dtype
-  bf16 if supported else fp16 (T4 -> fp16); `prepare_model_for_kbit_training`; SDPA attention.
-- **Vision input**: native SmolVLM tiling, `image_longest_edge 1152` (768 on T4),
-  384 px tiles plus an overview, 81 visual tokens per tile. Original and Release stay in the
+- **Model**: `google/gemma-4-E2B-it`, bitsandbytes **4-bit NF4, double quant**, compute dtype
+  bf16 if supported else fp16 (T4 -> fp16); SDPA attention. Frozen lookup tables retain their loaded
+  dtype throughout k-bit preparation (no transient fp32 copies), while layer norms keep fp32 treatment.
+  E2B is 5.1B total parameters.
+- **Vision input**: native Gemma4 variable-aspect patches, at most 280 soft tokens per image.
+  Native extra thinking mode is disabled; the existing P1-P4 instructions are unchanged. Original and Release stay in the
   same conversation, as a nested pair. `max_seq_len 4096`, **never truncated**
   (over-length raises an error).
 - **Collator**: chat template (system + "ORIGINAL:" img + "RELEASE:" img + P4 + target); labels = −100
@@ -125,7 +127,7 @@ Selected prompt on the full **test** split -> `predictions/baseline_zero_shot_te
 - Resumes from `outputs/checkpoints/checkpoint-*` (keeps last 3). Final -> `final_adapter/`, `training_log.json`.
 
 ## [7] Fine-tuned inference - `scripts/05_infer.py`, `prism/vlm.py`
-- Base 4-bit + `PeftModel(best_adapter)`, greedy decoding, left padding, batch 2 (T4),
+- Base 4-bit + `PeftModel(best_adapter)`, greedy decoding, left padding, batch 1 (Colab <20 GB),
   `max_new_tokens 768` for P4 (256 for others); CUDA OOM -> falls back to batch 1 for that batch.
 - Appends each row to `predictions/finetuned_qlora_test.jsonl` (resumable).
 - Writes `reports/release_report_finetuned_qlora.xlsx` (per sample: 12 scores, categories, overall, rank).
@@ -182,7 +184,7 @@ within 25 % or 1 unit). It measures whether the written reason is true, not only
 | `prism-vlm-finish` (GPU) | stages 7-10 | code + datagen + baseline + train outputs |
 
 - One GPU session at a time (free tier); each stage in its own session so memory is not shared.
-- Colab T4 overrides: `model.image_longest_edge 768`, `inference.batch_size 2`.
+- Colab T4 override: `inference.batch_size 1`; native 280-token vision budget is retained.
   Training hyperparameters, prompt-study size and evaluation remain those of `configs/config.yaml`.
 - Each session stops itself at 10.5 h so its output is always saved; state lives in
   `/kaggle/working/state` and is merged into the next session.

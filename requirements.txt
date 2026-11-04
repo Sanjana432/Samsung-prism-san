@@ -8,12 +8,11 @@ matplotlib>=3.8
 openpyxl>=3.1
 pyyaml>=6.0
 # --- model stages (GPU) - pinned to a combination with a known-stable API ---
-torch>=2.3
+torch>=2.6
 torchvision          # install from the same CUDA index as torch
-transformers==4.51.3
-trl==0.17.0
-peft==0.15.2
+transformers==5.17.0
+trl==1.13.0
+peft==0.21.0
 accelerate>=1.6.0
 bitsandbytes>=0.45.0
 datasets>=3.0
-num2words==0.5.14     # required by the native SmolVLM processor
