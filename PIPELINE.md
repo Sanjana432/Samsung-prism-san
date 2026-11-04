@@ -1,6 +1,6 @@
 # PRISM 26VI05 - Implemented pipeline
 
-> This is the improved `codex/gemma4-model-modified` branch. Start with
+> This is the improved `gemma4-model-modified` branch. Start with
 > [MODIFIED_PIPELINE.md](MODIFIED_PIPELINE.md) for the current run instructions,
 > shared pipeline fixes, verification evidence and remaining GPU checks.
 
