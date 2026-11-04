@@ -6,10 +6,10 @@ separate repositories. Open a model's link below to see and download that versio
 
 | Version | Exact model checkpoint | License | Code | Notebook |
 |---|---|---|---|---|
-| SmolVLM2 | `HuggingFaceTB/SmolVLM2-2.2B-Instruct` | Apache-2.0 | [SmolVLM2 branch](https://github.com/Sanjana432/Samsung-prism-san/tree/codex/smolvlm2-model) | [Open Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/smolvlm2-model/colab_run_pipeline.ipynb) |
-| Gemma 4 E2B | `google/gemma-4-E2B-it` | Apache-2.0 | [Gemma branch](https://github.com/Sanjana432/Samsung-prism-san/tree/codex/gemma4-model) | [Open Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/gemma4-model/colab_run_pipeline.ipynb) |
-| InternVL 3.5 2B | `OpenGVLab/InternVL3_5-2B-HF` | Apache-2.0 | [InternVL branch](https://github.com/Sanjana432/Samsung-prism-san/tree/codex/internvl35-model) | [Open Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/internvl35-model/colab_run_pipeline.ipynb) |
-| Phi-3.5 Vision | `microsoft/Phi-3.5-vision-instruct` | MIT | [Phi branch](https://github.com/Sanjana432/Samsung-prism-san/tree/codex/phi35-model) | [Open Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/phi35-model/colab_run_pipeline.ipynb) |
+| SmolVLM2 | `HuggingFaceTB/SmolVLM2-2.2B-Instruct` | Apache-2.0 | [SmolVLM2 branch](https://github.com/Sanjana432/Samsung-prism-san/tree/smolvlm2-model) | [Open Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/smolvlm2-model/colab_run_pipeline.ipynb) |
+| Gemma 4 E2B | `google/gemma-4-E2B-it` | Apache-2.0 | [Gemma branch](https://github.com/Sanjana432/Samsung-prism-san/tree/gemma4-model) | [Open Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/gemma4-model/colab_run_pipeline.ipynb) |
+| InternVL 3.5 2B | `OpenGVLab/InternVL3_5-2B-HF` | Apache-2.0 | [InternVL branch](https://github.com/Sanjana432/Samsung-prism-san/tree/internvl35-model) | [Open Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/internvl35-model/colab_run_pipeline.ipynb) |
+| Phi-3.5 Vision | `microsoft/Phi-3.5-vision-instruct` | MIT | [Phi branch](https://github.com/Sanjana432/Samsung-prism-san/tree/phi35-model) | [Open Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/phi35-model/colab_run_pipeline.ipynb) |
 
 The original team's Qwen2.5-VL-3B pipeline remains on `main`. It is an additional baseline,
 outside the four versions above. Each model branch contains the complete pipeline, not just a model file.

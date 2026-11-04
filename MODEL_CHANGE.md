@@ -33,8 +33,8 @@ rankings and evaluation code are preserved. The previous local website is unchan
 
 ## Access and run
 
-1. [Open this branch in GitHub](https://github.com/Sanjana432/Samsung-prism-san/tree/codex/phi35-model)
-   or [open its notebook in Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/phi35-model/colab_run_pipeline.ipynb).
+1. [Open this branch in GitHub](https://github.com/Sanjana432/Samsung-prism-san/tree/phi35-model)
+   or [open its notebook in Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/phi35-model/colab_run_pipeline.ipynb).
 2. Choose a GPU runtime. The notebook clones this branch into `MyDrive/prism_ladder_phi35`,
    keeping weights, adapters, predictions and reports separate from the other model versions.
 3. Copy the team's identical `data/` folder (images, metadata and splits) into that workspace
