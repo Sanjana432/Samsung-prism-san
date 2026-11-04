@@ -1,6 +1,6 @@
 """Stage 4 - QLoRA supervised fine-tuning (GPU).
 
-SmolVLM2-2.2B-Instruct in 4-bit NF4 + LoRA (r16 / alpha32 / dropout .05 / all-linear), TRL SFTTrainer,
+Phi-3.5-vision-Instruct in 4-bit NF4 + LoRA (r16 / alpha32 / dropout .05 / all-linear), TRL SFTTrainer,
 cosine LR, warmup, gradient accumulation. Loss is computed ONLY on the assistant answer
 (<analysis> CoT + JSON). Image tokens are never truncated: a sequence longer than max_seq_len aborts.
 
@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from prism.common import P, abspath, load_config, read_jsonl  # noqa: E402
 from prism.metrics import METRIC_KEYS  # noqa: E402
 from prism.prompts import PROMPTS, TRAIN_PROMPT  # noqa: E402
-from prism.vlm import VLMClass, assistant_marker, bnb_config, compute_dtype, encode_pairs, load_processor, predict  # noqa: E402
+from prism.vlm import assistant_marker, compute_dtype, encode_pairs, load_base_model, load_processor, predict  # noqa: E402
 
 
 class Collator:
@@ -50,12 +50,12 @@ class Collator:
         enc = encode_pairs(self.proc, batch, PROMPTS[TRAIN_PROMPT], [b["target"] for b in batch], padding_side="right")
         if enc["input_ids"].shape[1] > self.max_len:
             raise RuntimeError(f"sequence length {enc['input_ids'].shape[1]} > max_seq_len {self.max_len}; "
-                               "raise model.max_seq_len or lower model.image_longest_edge (never truncate image tokens)")
+                               "raise model.max_seq_len or lower model.num_crops (never truncate image tokens)")
         labels = enc["input_ids"].clone()
         labels[enc["attention_mask"] == 0] = -100
         for i, ids in enumerate(enc["input_ids"].tolist()):
             labels[i, : self._start(ids)] = -100
-        labels[enc["input_ids"] == self.proc.tokenizer.convert_tokens_to_ids(self.proc.image_token)] = -100
+        labels[enc["input_ids"] < 0] = -100
         enc["labels"] = labels
         return enc
 
@@ -124,8 +124,7 @@ def main():
     val_gen = val_sorted[: tc["val_generation_subset"]]
 
     proc = load_processor(cfg, padding_side="right")
-    model = VLMClass.from_pretrained(cfg["model"]["base"], quantization_config=bnb_config(cfg), torch_dtype=compute_dtype(),
-                                     device_map="auto", attn_implementation="sdpa")
+    model = load_base_model(cfg)
     model.config.use_cache = False
     model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=tc["gradient_checkpointing"],
                                             gradient_checkpointing_kwargs={"use_reentrant": False})

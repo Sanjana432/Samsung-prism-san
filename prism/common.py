@@ -8,9 +8,9 @@ import os
 import yaml
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# SmolVLM2 processor/tokenizer files. Weights may be a single safetensors file or indexed shards.
-MODEL_FILES = ["config.json", "preprocessor_config.json", "processor_config.json",
-               "tokenizer.json", "tokenizer_config.json"]
+# Phi's official checkpoint includes custom code; weights may be single-file or indexed shards.
+MODEL_FILES = ["config.json", "preprocessor_config.json", "tokenizer.json", "tokenizer_config.json",
+               "configuration_phi3_v.py", "modeling_phi3_v.py", "processing_phi3_v.py"]
 
 
 def load_config(path: str | None = None) -> dict:
@@ -34,8 +34,8 @@ def check_model_dir(d: str) -> None:
     config = os.path.join(d, "config.json")
     if os.path.isfile(config):
         with open(config) as f:
-            if json.load(f).get("model_type") != "smolvlm":
-                raise SystemExit(f"model folder {d} is not a SmolVLM checkpoint; use SmolVLM2-2.2B-Instruct")
+            if json.load(f).get("model_type") != "phi3_v":
+                raise SystemExit(f"model folder {d} is not a Phi vision checkpoint; use Phi-3.5-vision-instruct")
     template = os.path.join(d, "chat_template.json")
     tokenizer_config = os.path.join(d, "tokenizer_config.json")
     if not os.path.isfile(template) and os.path.isfile(tokenizer_config):

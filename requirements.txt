@@ -10,10 +10,10 @@ pyyaml>=6.0
 # --- model stages (GPU) - pinned to a combination with a known-stable API ---
 torch>=2.3
 torchvision          # install from the same CUDA index as torch
-transformers==4.51.3
+transformers==4.46.3  # pinned for Phi's official remote-code Cache API
 trl==0.17.0
 peft==0.15.2
 accelerate>=1.6.0
 bitsandbytes>=0.45.0
 datasets>=3.0
-num2words==0.5.14     # required by the native SmolVLM processor
+sentencepiece>=0.2

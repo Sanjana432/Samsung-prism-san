@@ -4,8 +4,8 @@ End-to-end pipeline: **dataset with pre-defined ground-truth scores -> pairwise 
 benchmark -> QLoRA fine-tuning -> CoT inference -> validation gate -> Python score engine ->
 agreement analytics -> diagnostic audit.**
 
-## Sanjana's model comparison: SmolVLM2
-This fork uses **`HuggingFaceTB/SmolVLM2-2.2B-Instruct`** (Apache-2.0, SmolLM2 + SigLIP),
+## Sanjana's model comparison: Phi-3.5 Vision
+This branch uses **`microsoft/Phi-3.5-vision-instruct`** (MIT, Phi decoder + CLIP vision),
 an independent model family from the original Qwen2.5-VL experiment. See
 [`MODEL_CHANGE.md`](MODEL_CHANGE.md) for the exact scope, verification and Colab instructions.
 Generation, ground-truth labels, splits, P1-P4 prompts, QLoRA hyperparameters and evaluation stay unchanged.
@@ -16,7 +16,7 @@ Generation, ground-truth labels, splits, P1-P4 prompts, QLoRA hyperparameters an
 - **Manually:** see the numbered steps in `CLAUDE.md`, or `./run_all.sh`.
 - **Google Colab:** upload this zip to Drive, open `colab_run_pipeline.ipynb`, choose a GPU runtime, Run all.
 
-Hardware: NVIDIA GPU with >= 16 GB VRAM recommended; Colab reduces `model.image_longest_edge` to 768 on T4.
+Hardware: NVIDIA GPU with >= 16 GB VRAM recommended; native Phi multi-image processing uses 4 crops per image.
 Run the GPU smoke test to check actual memory use before long stages.
 Rough times: dataset 15-30 min (CPU), prompt study + baseline 1-3 h, training 2-6 h, final inference 1-2 h.
 
@@ -60,7 +60,7 @@ Drop your own photos into `assets/photos/` and the flyer/menu/form photo areas w
   `pilot/sheets/` and `pilot_metadata.json` - a visual sanity check of each artifact type.
 
 ## Model pipeline (matches the Training & Evaluation slide)
-1. Training inputs - pairwise JSONL, native SmolVLM2 processor (image tokens never truncated), 4-bit NF4 base.
+1. Training inputs - pairwise JSONL, official Phi vision processor (image tokens never truncated), 4-bit NF4 base.
 2. QLoRA adapters - all-linear, r 16 / alpha 32 / dropout 0.05.
 3. Optimisation - TRL SFTTrainer, cosine LR, warmup 5%, grad-accum 16, validation checkpointing.
 4. Validation gate - JSON schema + numeric range check, one retry, failures logged (`prism/validation.py`).
@@ -95,7 +95,7 @@ Coverage: valid-output rate after the gate. Baseline vs fine-tuned side by side.
 6. **It improves itself.** `08_data_engine.py` generates new training data only for the defects the model
    still misses, round after round.
 7. **It tests generalisation.** 23 document/UI types with an unseen-template test option; this fork
-   runs the 2.2B SmolVLM2 comparison with fp16/SDPA and 4-bit weights for limited-VRAM GPUs.
+   runs the 4.2B Phi vision comparison with fp16/eager attention and 4-bit weights for limited-VRAM GPUs.
 8. **Sanity built in.** Unchanged controls measure false alarms; ordering across levels measures consistency.
 
 ## No manual annotation

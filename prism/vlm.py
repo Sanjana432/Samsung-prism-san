@@ -9,7 +9,8 @@ import time
 
 import torch
 from PIL import Image
-from transformers import AutoProcessor, BitsAndBytesConfig, SmolVLMForConditionalGeneration as VLMClass
+from transformers import AutoProcessor, AutoModelForCausalLM, BitsAndBytesConfig
+from transformers.feature_extraction_utils import BatchFeature
 
 from .common import abspath
 from .prompts import PROMPTS, RETRY, build_messages
@@ -27,20 +28,17 @@ def compute_dtype():
 
 def load_processor(cfg, padding_side="left"):
     m = cfg["model"]
-    proc = AutoProcessor.from_pretrained(m["base"])
-    # Set both copies: SmolVLM caches the image size at construction. Passing `size` to
-    # AutoProcessor also puts it in tokenizer init_kwargs in 4.51.3, causing duplicate kwargs.
-    proc.image_processor.size = {"longest_edge": m["image_longest_edge"]}
-    proc.image_size = proc.image_processor.size
+    proc = AutoProcessor.from_pretrained(m["base"], revision=m["revision"], code_revision=m["revision"],
+                                         trust_remote_code=True, num_crops=m["num_crops"])
     proc.tokenizer.padding_side = padding_side
     return proc
 
 
 def assistant_marker(proc):
     """Derive the answer header from this checkpoint's template, rather than a Qwen token literal."""
-    conversation = [{"role": "user", "content": [{"type": "text", "text": ""}]}]
-    before = proc.apply_chat_template(conversation, tokenize=False, add_generation_prompt=False)
-    after = proc.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True)
+    conversation = [{"role": "user", "content": ""}]
+    before = proc.tokenizer.apply_chat_template(conversation, tokenize=False, add_generation_prompt=False)
+    after = proc.tokenizer.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True)
     if not after.startswith(before):
         raise ValueError("chat template does not append an assistant generation header")
     marker = proc.tokenizer.encode(after[len(before):], add_special_tokens=False)
@@ -50,28 +48,43 @@ def assistant_marker(proc):
 
 
 def encode_pairs(proc, items, prompt, targets=None, padding_side="left"):
-    """Keep each Original/Release together: SmolVLM expects a nested image list per conversation.
+    """Encode each pair with Phi's processor, then pad text and concatenate vision features.
 
-    Prompt wording, image order and training targets are the same as in the Qwen experiment.
-    Only the checkpoint's chat template and native image processor change.
+    The official processor accepts one prompt and uses negative image IDs. Keep those IDs and
+    attention-mask ones intact; replacing them with padding would hide the comparison images.
     """
     if targets is not None and len(targets) != len(items):
         raise ValueError("one training target is required per image pair")
-    messages, images = [], []
+    encoded = []
     for i, item in enumerate(items):
         original = abspath(item["original_image_path"])
         release = abspath(item["release_image_path"])
-        messages.append(build_messages(original, release, prompt, None if targets is None else targets[i]))
+        messages = build_messages(original, release, prompt, None if targets is None else targets[i])
+        native_messages, image_number = [], 0
+        for message in messages:
+            content = []
+            for block in message["content"]:
+                if block["type"] == "image":
+                    image_number += 1
+                    content.append(f"<|image_{image_number}|>")
+                else:
+                    content.append(block["text"])
+            native_messages.append({"role": message["role"], "content": "".join(content)})
         pair = []
         for path in (original, release):
             with Image.open(path) as image:
                 pair.append(image.convert("RGB"))
-        images.append(pair)
-    texts = [proc.apply_chat_template(m, tokenize=False, add_generation_prompt=targets is None) for m in messages]
+        text = proc.tokenizer.apply_chat_template(native_messages, tokenize=False, add_generation_prompt=targets is None)
+        encoded.append(proc(text, images=pair, padding=False, truncation=False, return_tensors="pt"))
     old = proc.tokenizer.padding_side
     try:
         proc.tokenizer.padding_side = padding_side
-        return proc(text=texts, images=images, padding=True, truncation=False, return_tensors="pt")
+        text_inputs = proc.tokenizer.pad(
+            [{"input_ids": e["input_ids"][0].tolist(), "attention_mask": e["attention_mask"][0].tolist()} for e in encoded],
+            padding=True, return_tensors="pt")
+        return BatchFeature(data={**text_inputs,
+                                  "pixel_values": torch.cat([e["pixel_values"] for e in encoded], dim=0),
+                                  "image_sizes": torch.cat([torch.as_tensor(e["image_sizes"]) for e in encoded], dim=0)})
     finally:
         proc.tokenizer.padding_side = old
 
@@ -82,11 +95,18 @@ def bnb_config(cfg):
                               bnb_4bit_use_double_quant=q["double_quant"], bnb_4bit_compute_dtype=compute_dtype())
 
 
-def load_model(cfg, adapter: str | None = None):
+def load_base_model(cfg):
+    """One loading path for inference, training and the GPU smoke test."""
     if not torch.cuda.is_available():
         raise SystemExit("A CUDA GPU is required for model stages (03/04/05). See README - 'No GPU?'.")
-    model = VLMClass.from_pretrained(cfg["model"]["base"], quantization_config=bnb_config(cfg),
-                                     torch_dtype=compute_dtype(), device_map="auto", attn_implementation="sdpa")
+    m = cfg["model"]
+    return AutoModelForCausalLM.from_pretrained(m["base"], revision=m["revision"], code_revision=m["revision"],
+                                               trust_remote_code=True, quantization_config=bnb_config(cfg),
+                                               torch_dtype=compute_dtype(), device_map="auto", attn_implementation="eager")
+
+
+def load_model(cfg, adapter: str | None = None):
+    model = load_base_model(cfg)
     if adapter:
         from peft import PeftModel
         model = PeftModel.from_pretrained(model, adapter)

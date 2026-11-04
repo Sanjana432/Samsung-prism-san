@@ -4,7 +4,7 @@
 2. generates on 2 validation pairs with P4 and runs the validation gate
 3. builds a training batch with the collator: checks label masking and sequence length
 4. one forward + backward pass through the LoRA-wrapped model
-5. prints peak VRAM and a recommendation for batch size / image_longest_edge
+5. prints peak VRAM and a recommendation for batch size / num_crops
 """
 
 import importlib.util
@@ -16,7 +16,7 @@ import torch
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from prism.common import P, load_config, read_jsonl  # noqa: E402
-from prism.vlm import VLMClass, bnb_config, compute_dtype, load_model, load_processor, predict  # noqa: E402
+from prism.vlm import compute_dtype, load_base_model, load_model, load_processor, predict  # noqa: E402
 
 
 def main():
@@ -50,8 +50,7 @@ def main():
 
     torch.cuda.reset_peak_memory_stats()
     q = cfg["qlora"]
-    m = VLMClass.from_pretrained(cfg["model"]["base"], quantization_config=bnb_config(cfg), torch_dtype=compute_dtype(),
-                                 device_map="auto", attn_implementation="sdpa")
+    m = load_base_model(cfg)
     m.config.use_cache = False
     m = prepare_model_for_kbit_training(m, use_gradient_checkpointing=True, gradient_checkpointing_kwargs={"use_reentrant": False})
     m = get_peft_model(m, LoraConfig(r=q["r"], lora_alpha=q["alpha"], lora_dropout=q["dropout"],
@@ -65,7 +64,7 @@ def main():
     print(f"[smoke] train step OK, loss={loss.item():.3f}, peak VRAM {peak:.2f} GB")
     total = g.total_memory / 2**30
     if peak > 0.85 * total:
-        print("[smoke] RECOMMEND: lower model.image_longest_edge to 768 (or 384) and inference.batch_size to 1")
+        print("[smoke] RECOMMEND: lower inference.batch_size to 1; if necessary lower model.num_crops to 1 and record it")
     elif total >= 40:
         print("[smoke] RECOMMEND: you can raise inference.batch_size to 8")
     print("SMOKE TEST PASSED")

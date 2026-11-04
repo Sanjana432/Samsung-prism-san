@@ -1,97 +1,83 @@
-# Sanjana's PRISM model comparison: SmolVLM2
+# PRISM comparison: Phi-3.5 Vision
 
-This branch replaces the Qwen2.5-VL-3B integration with
-[`HuggingFaceTB/SmolVLM2-2.2B-Instruct`](https://huggingface.co/HuggingFaceTB/SmolVLM2-2.2B-Instruct).
-It keeps the team's experiment and evaluation pipeline in place.
+This branch replaces only the model integration with
+[`microsoft/Phi-3.5-vision-instruct`](https://huggingface.co/microsoft/Phi-3.5-vision-instruct).
+Microsoft releases this 4.2B multimodal model under MIT and explicitly supports optical character
+recognition, document understanding and multiple-image comparison. This is a research candidate;
+minute-change detection accuracy on PRISM must be established by the shared benchmark.
 
-## Why this model
+## Model-specific implementation
 
-- It is an Apache-2.0 model with a SmolLM2 language decoder and SigLIP vision encoder, providing
-  a model family independent of Qwen for the team comparison.
-- It accepts multiple images in one conversation and has native support in the repository's
-  existing `transformers==4.51.3`, including PEFT/LoRA training.
-- Its 2.2B size makes it a practical candidate for limited-memory Colab GPUs. The integration
-  retains 4-bit NF4/double quantization, native fp16 on T4 and SDPA attention; FlashAttention is not required.
-- This is a choice based on architecture, features and resource constraints. It is not a claim
-  that SmolVLM2 outperforms Qwen, or that its minute-change accuracy has already been measured.
+- Official Phi decoder plus CLIP vision encoder, distinct from the Qwen2.5-VL baseline.
+- The official checkpoint uses custom Python code. The configuration, processor, tokenizer, code
+  and weights are pinned to revision `12b77fb40b63a2c73c68243d3f767aab688a1b2a`; `trust_remote_code`
+  is limited to the selected model. The downloaded configuration/model/processor sources were
+  reviewed before the CPU tests loaded them.
+- `transformers==4.46.3`, `trl==0.17.0` and `peft==0.15.2` retain the Cache interfaces used by
+  the official model. Do not replace this with a latest-Transformers install in the same session.
+- Native multi-image input uses four 336 px crops plus an overview per image, with Original first
+  and Release second. Phi's processor encodes one prompt at a time; this branch pads the resulting
+  text and concatenates vision features in pair order, preserving batch behavior.
+- Negative image placeholder IDs stay negative in `input_ids` and have attention mask 1. They
+  are masked to -100 only in training labels, together with prompt/padding positions. Integer
+  `input_ids`, masks and image sizes are not cast to fp16.
+- Inference, QLoRA training and the GPU smoke test use one common model-loading function:
+  NF4/double quantization, native fp16 on T4 (bf16 only on supporting GPUs), eager attention.
+  FlashAttention is not required.
 
-## Exact change scope
+Only `model` configuration, its integration/dependencies, training collation, GPU smoke loading,
+the model-specific Colab setup and model documentation/tests change. The renderer, all 23 templates,
+24-release ladder, ground truth, grouped splits, P1-P4 rubric text, target text, 12 metrics, QLoRA
+r/alpha/dropout/target modules, optimization, validation checkpoint rule, output schema, retry/resume,
+rankings and evaluation code are preserved. The previous local website is unchanged.
 
-| File | Model-related change |
-|---|---|
-| `configs/config.yaml` | SmolVLM2 model ID, separate local checkpoint directory, native image-size setting |
-| `prism/vlm.py` | Native model class, paired-image processing, template-derived assistant header, floating-point vision input dtype |
-| `scripts/04_train_qlora.py` | Use the shared SmolVLM pair encoder and native assistant/image label mask |
-| `prism/common.py` | Validate SmolVLM local checkpoint files; allow single or sharded safetensors weights |
-| `requirements.txt` | Replace `qwen-vl-utils` with the SmolVLM processor's `num2words` dependency |
-| `colab_run_pipeline.ipynb` | Clone this model branch into its own Drive workspace and use SmolVLM T4 image settings |
-| `scripts/gpu_smoke_test.py` | Update the model-specific image-size recommendation |
-| `tests/test_smolvlm.py` | Integration regression checks |
-| `README.md`, `PIPELINE.md`, this file | Model identification and run instructions |
+## Access and run
 
-The renderer, all 23 templates, 24-release ladder, measured ground truth, metric definitions,
-P1-P4 prompt text, target text, split assignment, QLoRA r/alpha/dropout/target modules, optimization,
-checkpoint selection, validation gate/retry rules, ranking and evaluation calculations are unchanged.
-No website files are present in this upstream repository; the earlier local PRISM site is unchanged.
+1. [Open this branch in GitHub](https://github.com/Sanjana432/Samsung-prism-san/tree/codex/phi35-model)
+   or [open its notebook in Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/phi35-model/colab_run_pipeline.ipynb).
+2. Choose a GPU runtime. The notebook clones this branch into `MyDrive/prism_ladder_phi35`,
+   keeping weights, adapters, predictions and reports separate from the other model versions.
+3. Copy the team's identical `data/` folder (images, metadata and splits) into that workspace
+   before running dataset cells if it already exists. Do not copy another model's `outputs/`
+   or `predictions/`. Generation remains available with unchanged seeds and code.
+4. Install the branch's `requirements.txt` and run the existing dataset checks, then
+   `scripts/gpu_smoke_test.py` before longer model stages. The smoke test measures real 4-bit
+   inference, a LoRA backward step and peak CUDA memory. On T4 the notebook reduces inference
+   batch size to 2; if memory is insufficient, use 1 first. Lowering crops can hide minute
+   changes, so record that choice in comparisons.
+5. Run the existing prompt study, zero-shot baseline, training, inference and evaluation cells.
+   Compare scores using the same source IDs, releases, split manifest, prompt rubric and metrics.
 
-## Run on Colab
+## Verification scope
 
-1. [Open the model branch's notebook in Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/smolvlm2-model/colab_run_pipeline.ipynb).
-2. Select a GPU runtime. The setup downloads this branch into
-   `MyDrive/prism_ladder_smolvlm2`, separate from the Qwen experiment's `prism_ladder` folder.
-3. Run the setup cells. On GPUs below 20 GB the notebook sets
-   `model.image_longest_edge: 768` and `inference.batch_size: 2`.
-4. Use the **same original images, generated releases, metadata and split files** as the team's
-   Qwen comparison. Copy the existing `data/` directory into this model workspace before running
-   the dataset cells when it is already available. Do not copy Qwen's `outputs/`, `predictions/`
-   or model-specific reports. Dataset generation is still available, with the same seed and code,
-   if the team has not generated its shared dataset yet.
-5. Run `scripts/gpu_smoke_test.py` before the long model stages. It checks native processor input,
-   answer masking, inference, one real 4-bit LoRA forward/backward step and peak GPU memory.
-   If it runs out of memory, reduce inference batch size to 1 first; reducing image resolution
-   can remove the minute discrepancies being studied and must be recorded in the comparison.
-6. Run the existing prompt study/baseline, training, inference and evaluation cells. Stage names,
-   output formats and the 12 quality metrics remain the same.
+Verified on 4 November 2026: **14/14 integration tests passed** with Transformers 4.46.3,
+PEFT 0.15.2, TRL 0.17.0, CPU PyTorch 2.14.0 and torchvision 0.29.0. The real 768x1024
+generated invoice with its full twelve-line reasoning target used **2384 tokens** (357 supervised)
+at four crops per image, fitting the unchanged 4096-token limit. Batched two-pair logits matched
+separate single-pair outputs, confirming that repeated -1/-2 image IDs do not mix samples.
+All 31 Python files parse; notebook JSON and `git diff --check` pass; all non-model config sections
+match the original `1ae046558905c0bba20198ea077fec2cb0ffc627` commit.
 
-For a fair cross-model comparison, match the sample IDs, train/validation/test membership, prompts
-and scoring rules, and record the model's preprocessing and training settings. The model's own
-tiling is different from Qwen's pixel-budget processor; there is no added crop, detector or scoring aid.
-
-## Verification
-
-Verified locally on 4 November 2026: **13/13 integration tests passed** with the actual public
-processor files and `transformers==4.51.3`, `peft==0.15.2`, `trl==0.17.0` (CPU PyTorch 2.14.0).
-All 31 Python source files parse, the notebook JSON is valid, `git diff --check` passes and all
-non-model configuration sections match the original commit `1ae046558905c0bba20198ea077fec2cb0ffc627`.
-The unchanged repository CPU self-test passed, with the saved-dataset report test skipped as below.
-
-The integration suite uses the real public tokenizer, chat template and image processor, and a
-tiny randomly initialized instance of the actual SmolVLM architecture for CPU training checks.
-It does not use or measure the full pretrained checkpoint.
+CPU integration tests use the real official tokenizer and image processor, plus a randomly
+initialized reduced Phi decoder and one-layer CLIP encoder with the real HD image projection.
+They test pair ordering, active negative image IDs, assistant-only labels, generation suffix
+decoding, retry/resume, LoRA gradients and adapter reload. Reduced weights are not a pretrained
+model and these checks cannot establish PRISM accuracy or full-model GPU memory requirements.
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-Set `SMOLVLM_PROCESSOR_DIR` to a local copy of the model's processor/tokenizer files to enable all
-native-processor tests. Without it, those tests are explicitly skipped. No model weights are needed:
+Set `PHI35_PROCESSOR_DIR` to the local pinned metadata/code snapshot to enable native tests.
+Download only the small files, without the checkpoint weights, in the test environment:
 
 ```python
 import os
 from huggingface_hub import snapshot_download
-os.environ['SMOLVLM_PROCESSOR_DIR'] = snapshot_download(
-    'HuggingFaceTB/SmolVLM2-2.2B-Instruct', allow_patterns=['*.json', '*.txt', '*.model'])
+os.environ['PHI35_PROCESSOR_DIR'] = snapshot_download(
+    'microsoft/Phi-3.5-vision-instruct', revision='12b77fb40b63a2c73c68243d3f767aab688a1b2a',
+    allow_patterns=['*.json', '*.txt', '*.model', '*.py'])
 ```
 
-Then launch the unittest command in the same environment. The repository's unchanged CPU self-test is:
-
-```bash
-python scripts/00_selftest.py
-```
-
-The CPU self-test covers all 23 template identity checks, measured-score fidelity, the validation
-gate, score engine and 3 complete 24-release ladders. Its saved-dataset report test is skipped
-when `data/pairs/test.jsonl` has not been generated. These are software checks, not model results.
-
-Full pretrained inference, 4-bit CUDA memory use, full QLoRA training and benchmark accuracy must
-still be verified on the Colab GPU. No accuracy figures or trained adapter are supplied by this change.
+Full 4-bit CUDA execution, end-to-end QLoRA and pretrained accuracy still require a Colab GPU run.
+No trained checkpoint or measured PRISM model accuracy is included in this branch.
