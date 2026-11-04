@@ -396,24 +396,38 @@ def ladder_sensitivity(records: list, category_weights=None, false_alarm_below=0
         mono[knob] = {"mean_spearman": _mean(correlations), "n_with_variation": len(correlations),
                       "n_flat": n_flat, "n_incomplete": n_incomplete}
     leak = defaultdict(lambda: defaultdict(list))
+    intended_mass, total_mass = defaultdict(float), defaultdict(float)
+    unintended = defaultdict(lambda: defaultdict(list))
+    attribution_counts = defaultdict(int)
     for rels in by_s.values():
         c = rels.get("control_0")
         if c is None or c.get("pred") is None:
             continue
         for rid, row in rels.items():
             if rid != "control_0" and row.get("pred") is not None:
+                knob = row["artifact_type"]
+                intended_metrics = {key for key in METRIC_KEYS if abs(row["gt"][key] - c["gt"][key]) > 1e-9}
+                primary = row.get("primary_metric", KNOB_PRIMARY.get(knob))
+                if primary in METRIC_KEYS:
+                    intended_metrics.add(primary)
+                drops = {key: max(0.0, c["pred"][key] - row["pred"][key]) for key in METRIC_KEYS}
+                intended_mass[knob] += sum(drops[key] for key in intended_metrics)
+                total_mass[knob] += sum(drops.values())
+                attribution_counts[knob] += 1
                 for key in METRIC_KEYS:
-                    leak[row["artifact_type"]][key].append(row["pred"][key] - c["pred"][key])
+                    leak[knob][key].append(row["pred"][key] - c["pred"][key])
+                    unintended[knob][key].append(0.0 if key in intended_metrics else drops[key])
     leakage = {knob: {key: _mean(values) for key, values in keys.items()} for knob, keys in leak.items()}
     precision = {}
-    for knob, deltas in leakage.items():
-        drops = {key: max(0.0, -value) for key, value in deltas.items()}
-        total = sum(drops.values())
-        precision[knob] = drops.get(KNOB_PRIMARY.get(knob), 0.0) / total if total > 1e-9 else float("nan")
+    for knob in leakage:
+        precision[knob] = intended_mass[knob] / total_mass[knob] if total_mass[knob] > 1e-9 else float("nan")
     fa = [any(c["pred"][key] < false_alarm_below for key in METRIC_KEYS) for c in controls]
     return {"n_originals": len(by_s), "rows": rows, "jnd": jnd, "monotonicity": mono,
             "jnd_denominator": "all expected releases; missing or invalid comparisons count as failures",
             "leakage": leakage, "attribution_precision": precision,
+            "attribution_definition": "sum of positive predicted drops on per-pair GT-changed metrics plus primary / all positive predicted drops",
+            "attribution_counts": dict(attribution_counts),
+            "unintended_drop": {knob: {key: _mean(values) for key, values in keys.items()} for knob, keys in unintended.items()},
             "control": {"n": len(controls), "n_expected": n_expected_controls,
                         "n_originals_without_valid_control": len(by_s) - len(controls),
                         "false_alarm_rate": _mean(fa),

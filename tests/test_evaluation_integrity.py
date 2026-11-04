@@ -181,6 +181,26 @@ class AccuracyIntegrityTests(unittest.TestCase):
         self.assertEqual(result["quantity_accuracy"], .5)
         self.assertEqual(result["location_accuracy_given_explanation"], 1)
 
+    def bold_pair(self):
+        control = row("control_0", gt=1, pred=1, kind="ladder", artifact_type="control", level=0)
+        bold = row("font_family_4", gt=1, pred=1, kind="ladder", artifact_type="font_family", level=4,
+                   primary_metric="font_similarity", artifact_value="cross_class_bold")
+        bold["gt"].update(font_similarity=.6, semantic_emphasis=.8)
+        bold["pred"] = dict(bold["gt"])
+        return control, bold
+
+    def test_oracle_bold_edit_receives_full_multimetric_attribution_credit(self):
+        result = ladder_sensitivity(list(self.bold_pair()))
+        self.assertEqual(result["attribution_precision"]["font_family"], 1)
+        self.assertEqual(result["unintended_drop"]["font_family"]["semantic_emphasis"], 0)
+
+    def test_attribution_penalizes_only_unintended_metric_drops(self):
+        control, bold = self.bold_pair()
+        bold["pred"]["reading_flow"] = .8
+        result = ladder_sensitivity([control, bold])
+        self.assertAlmostEqual(result["attribution_precision"]["font_family"], .75)
+        self.assertAlmostEqual(result["unintended_drop"]["font_family"]["reading_flow"], .2)
+
     def test_all_invalid_reports_are_writable_and_strict_json(self):
         records = [row("a", pred=None, missing_prediction=True), row("b", pred=None),
                    dict(row("c"), pred={**scores(.8), METRIC_KEYS[0]: "invalid"})]
