@@ -8,7 +8,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from prism.common import P, load_config
+from prism.common import P, load_config, read_jsonl
 from prism.runtime import atomic_json
 
 
@@ -48,6 +48,11 @@ def main():
         if stage == "data":
             if not Path(P(cfg, "metadata_dir", "ladder.jsonl")).exists():
                 run("01_generate_dataset.py")
+            else:
+                count = len(read_jsonl(P(cfg, "metadata_dir", "ladder.jsonl")))
+                if count != cfg["ladder"]["n_originals"]:
+                    raise ValueError(f"Existing shared data has {count} Originals; configuration requests {cfg['ladder']['n_originals']}. "
+                                     "Use a matching configuration or a new dataset directory; existing images were preserved.")
             run("02_build_splits.py")
             run("validate_dataset.py")
         elif stage == "check":
