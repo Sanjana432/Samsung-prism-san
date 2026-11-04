@@ -21,9 +21,22 @@ KEY = ["MAE", "RMSE", "PLCC", "SROCC", "acc@0.05", "acc@0.10", "acc@0.15", "band
 
 
 def _fmt(v, d=3):
-    if v is None or (isinstance(v, float) and math.isnan(v)):
+    if v is None or (isinstance(v, (float, np.floating)) and not math.isfinite(v)):
         return "n/a"
     return f"{v:.{d}f}" if isinstance(v, float) else str(v)
+
+
+def finite_json(value):
+    """JSON has no NaN/Infinity literals: undefined statistics are exported as null."""
+    if isinstance(value, dict):
+        return {key: finite_json(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [finite_json(item) for item in value]
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
 
 
 def _style(ax):
@@ -52,7 +65,9 @@ def _plot_mae(results, path):
     ax.set_yticklabels(labels, color=INK)
     ax.invert_yaxis()
     ax.set_xlabel("Mean absolute error (lower is better)", color=INK2)
-    ax.set_title("MAE vs pre-defined ground truth, test split", color=INK, loc="left", fontsize=12)
+    ax.set_title("MAE vs renderer ground truth (valid outputs only)", color=INK, loc="left", fontsize=12)
+    if not any(result["coverage"]["n_valid"] for result in results.values()):
+        ax.text(0.5, 0.5, "No valid predictions; MAE is undefined", transform=ax.transAxes, ha="center")
     ax.legend(frameon=False, labelcolor=INK)
     fig.tight_layout()
     fig.savefig(path, dpi=150)
@@ -112,13 +127,13 @@ def _plot_ladder(results, path):
             rows = sorted((x for x in (r.get("ladder") or {}).get("rows", []) if x["artifact_type"] == knob),
                           key=lambda x: x["level"])
             if rows:
-                ax.plot([x["level"] for x in rows], [x["detection_rate"] for x in rows], marker="o", label=n)
+                ax.plot([x["level"] for x in rows], [x.get("detection_rate_end_to_end", x["detection_rate"]) for x in rows], marker="o", label=n)
         ax.axhline(0.5, color="#999", lw=0.8, ls="--")
         ax.set_title(knob, fontsize=9)
         ax.set_xticks([1, 2, 3, 4])
         ax.set_ylim(-0.02, 1.02)
         _style(ax)
-    axes[0].set_ylabel("detection rate")
+    axes[0].set_ylabel("detections / all expected releases")
     axes[-1].legend(fontsize=7, frameon=False)
     fig.tight_layout()
     fig.savefig(path, dpi=130)
@@ -131,23 +146,44 @@ def write_report(results: dict, rows_by_model: dict, out_dir: str, title: str = 
     fig_dir = os.path.join(out_dir, "figures")
     os.makedirs(fig_dir, exist_ok=True)
     names = list(results)
+    if not names:
+        raise ValueError("at least one model result is required")
+    for key in ("split_fingerprint", "dataset_fingerprint"):
+        fingerprints = {result.get("provenance", {}).get(key) for result in results.values()} - {None}
+        if len(fingerprints) > 1:
+            raise ValueError(f"cannot compare results with different {key}")
+    indexed = {name: {row.get("id", (row["sample_id"], row["release_id"])): row for row in rows_by_model[name]
+                      if row.get("pred") is not None} for name in names}
+    common_ids = set.intersection(*(set(rows) for rows in indexed.values()))
+    if any(indexed[name][identity]["gt"] != indexed[names[0]][identity]["gt"]
+           for name in names for identity in common_ids):
+        raise ValueError("cannot compare predictions against different ground-truth scores")
+    paired_mae = {name: (float(np.mean([abs(indexed[name][identity]["pred"][key] - indexed[name][identity]["gt"][key])
+                                      for identity in common_ids for key in METRIC_KEYS])) if common_ids else float("nan"))
+                  for name in names}
 
     # ---------------- Excel
     summary, per_metric, per_cat, per_tpl, rank, pref, sev = [], [], [], [], [], [], []
     for n, r in results.items():
         o, pooled, rk = r["per_category"]["overall"], r["all_metrics_pooled"], r["ranking"]
         summary.append({"model": n, "valid_output_rate": r["coverage"]["valid_rate"], "n_pairs": r["coverage"]["n_total"],
+                        "n_missing_predictions": r["coverage"].get("n_missing", 0),
+                        "n_invalid_outputs": r["coverage"].get("n_invalid_outputs", 0),
+                        "n_common_valid_pairs": len(common_ids), "MAE_common_valid_pairs": paired_mae[n],
                         "MAE_all_metrics": pooled["MAE"], "RMSE_all_metrics": pooled["RMSE"],
                         "PLCC_all_metrics": pooled["PLCC"], "SROCC_all_metrics": pooled["SROCC"],
                         "acc@0.10_all_metrics": pooled["acc@0.10"], "band_acc_all_metrics": pooled["band_acc"],
                         "MAE_overall_score": o["MAE"], "PLCC_overall_score": o["PLCC"], "SROCC_overall_score": o["SROCC"],
-                        "best_release_accuracy": rk["best_release_accuracy_RSA"],
+                        "best_release_accuracy_given_complete_group": rk["best_release_accuracy_RSA"],
+                        "best_release_accuracy_end_to_end": rk.get("best_release_accuracy_end_to_end"),
+                        "complete_group_rate": rk.get("complete_group_rate"),
+                        "gate_decision_accuracy_end_to_end": r["quality_gate"].get("decision_accuracy_end_to_end"),
                         "exact_ranking_accuracy": rk["exact_ranking_accuracy"], "mean_kendall_tau": rk["mean_kendall_tau"]})
         for k in METRIC_KEYS:
             per_metric.append({"model": n, "metric": METRIC_NAMES[k], **{c: r["per_metric"][k].get(c) for c in KEY}})
             pref.append({"model": n, "metric": METRIC_NAMES[k], "pairwise_preference_accuracy": rk["pairwise_preference_accuracy"][k]})
             for b, v in r["error_by_severity"][k].items():
-                sev.append({"model": n, "metric": METRIC_NAMES[k], "gt_bucket": b, "n": v["n"], "MAE": v["MAE"]})
+                sev.append({"model": n, "metric": METRIC_NAMES[k], "gt_bucket": b, **v})
         pref.append({"model": n, "metric": "Overall", "pairwise_preference_accuracy": rk["pairwise_preference_accuracy"]["overall"]})
         for c in CATEGORIES + ["overall"]:
             per_cat.append({"model": n, "category": CATEGORY_NAMES.get(c, "Overall"), **{x: r["per_category"][c].get(x) for x in KEY}})
@@ -163,11 +199,19 @@ def write_report(results: dict, rows_by_model: dict, out_dir: str, title: str = 
         pd.DataFrame(rank).to_excel(xw, sheet_name="ranking", index=False)
         pd.DataFrame(pref).to_excel(xw, sheet_name="pairwise_preference", index=False)
         pd.DataFrame(sev).to_excel(xw, sheet_name="error_by_severity", index=False)
+        pd.DataFrame([{"model": name, **result["coverage"]} for name, result in results.items()]).to_excel(xw, sheet_name="coverage", index=False)
+        pd.DataFrame([{"model": name, **{key: value for key, value in result["quality_gate"].items() if key != "confusion"}}
+                      for name, result in results.items()]).to_excel(xw, sheet_name="quality_gate", index=False)
+        pd.DataFrame([{"model": name, **result.get("explanations", {})} for name, result in results.items()]).to_excel(xw, sheet_name="explanations", index=False)
+        pd.DataFrame([{"model": name, **{key: result.get("provenance", {}).get(key) for key in
+                                       ("split", "split_fingerprint", "dataset_fingerprint", "base_model", "configuration_fingerprint")}}
+                      for name, result in results.items()]).to_excel(xw, sheet_name="provenance", index=False)
         for n, r in results.items():
             short = n[:18]
             pd.DataFrame(r["failure_patterns"]).to_excel(xw, sheet_name=f"patterns_{short}"[:31], index=False)
             pd.DataFrame(r["top_errors"][:500]).to_excel(xw, sheet_name=f"top_err_{short}"[:31], index=False)
             pd.DataFrame(r["ranking_rows"]).to_excel(xw, sheet_name=f"rank_{short}"[:31], index=False)
+            pd.DataFrame(r.get("invalid_outputs", [])).to_excel(xw, sheet_name=f"invalid_{short}"[:31], index=False)
             if r.get("ladder"):
                 pd.DataFrame(r["ladder"]["rows"]).to_excel(xw, sheet_name=f"ladder_{short}"[:31], index=False)
     for n, r in results.items():
@@ -187,10 +231,14 @@ def write_report(results: dict, rows_by_model: dict, out_dir: str, title: str = 
         for k, v in extra.items():
             L.append(f"- **{k}:** {v}")
         L.append("")
-    L += ["## Headline accuracy (test split)", "",
+    L += ["## Evaluated-pair accuracy and coverage", "",
+          "Coverage uses every expected ground-truth pair, including missing and invalid outputs. Regression, band and correlation statistics are conditional on valid predictions; undefined values are n/a. Gate and selection end-to-end success count abstentions as failures.", "",
+          "Release quality is ordered by (overall, technical), matching the score engine. Ground-truth ties are equivalence classes; best-selection credit is the share of the predicted best set that belongs to the ground-truth best set. Exact ranking ignores order within GT ties but requires strict ordering between different GT classes. Incomplete release groups receive zero end-to-end selection credit.", "",
           "| Measure | " + " | ".join(names) + " |", "|---|" + "---|" * len(names)]
     rowsdef = [
         ("Valid-output rate (validation gate)", lambda r: r["coverage"]["valid_rate"]),
+        ("Missing predictions", lambda r: r["coverage"].get("n_missing", 0)),
+        ("Complete release-group rate", lambda r: r["ranking"].get("complete_group_rate")),
         ("MAE, all 12 metrics pooled", lambda r: r["all_metrics_pooled"]["MAE"]),
         ("RMSE, all 12 metrics pooled", lambda r: r["all_metrics_pooled"]["RMSE"]),
         ("PLCC, all 12 metrics pooled", lambda r: r["all_metrics_pooled"]["PLCC"]),
@@ -202,17 +250,21 @@ def write_report(results: dict, rows_by_model: dict, out_dir: str, title: str = 
         ("Quality-band macro-F1", lambda r: r["all_metrics_pooled"]["band_macro_F1"]),
         ("Overall-score MAE", lambda r: r["per_category"]["overall"]["MAE"]),
         ("Overall-score SROCC", lambda r: r["per_category"]["overall"]["SROCC"]),
-        ("Best-release accuracy (RSA)", lambda r: r["ranking"]["best_release_accuracy_RSA"]),
-        ("Exact release-ranking accuracy (24 edits)", lambda r: r["ranking"]["exact_ranking_accuracy"]),
+        ("Best-set selection credit (complete groups only)", lambda r: r["ranking"]["best_release_accuracy_RSA"]),
+        ("Best-set selection credit (all expected groups)", lambda r: r["ranking"].get("best_release_accuracy_end_to_end")),
+        ("Exact ranking (complete groups only, GT ties allowed)", lambda r: r["ranking"]["exact_ranking_accuracy"]),
+        ("Exact ranking (all expected groups)", lambda r: r["ranking"].get("exact_ranking_accuracy_end_to_end")),
         ("Mean Kendall tau (ranking)", lambda r: r["ranking"]["mean_kendall_tau"]),
     ]
     for label, fn in rowsdef:
         L.append(f"| {label} | " + " | ".join(_fmt(fn(results[n])) for n in names) + " |")
     if len(names) >= 2:
         a, b = names[0], names[-1]
-        d = results[a]["all_metrics_pooled"]["MAE"] - results[b]["all_metrics_pooled"]["MAE"]
-        L += ["", f"Pooled MAE changes by **{-d:+.3f}** from `{a}` to `{b}` "
-                  f"({'improvement' if d > 0 else 'no improvement'})."]
+        if common_ids:
+            d = paired_mae[b] - paired_mae[a]
+            L += ["", f"On the same {len(common_ids)} pairs valid for every compared model, pooled MAE changes by {d:+.3f} from `{a}` to `{b}`. This is a common-valid-subset comparison; inspect full-split coverage alongside it."]
+        else:
+            L += ["", "No paired MAE comparison is available: there are no pairs with valid predictions for every model."]
     for n in names:
         r = results[n]
         L += ["", f"## Per-metric accuracy - {n}", "",
@@ -246,13 +298,13 @@ def write_report(results: dict, rows_by_model: dict, out_dir: str, title: str = 
             continue
         c = lad["control"]
         L += ["", f"## Minute-change sensitivity (ladder) - {n}", "",
-              f"{lad['n_originals']} Originals x (1 control + 6 edits x 4 levels). Detection = predicted primary-metric "
+              f"{lad['n_originals']} expected Originals. Detection requires a valid release and a valid unchanged control. No synthetic control score is substituted. End-to-end rates and just-noticeable levels include all expected releases; missing comparisons count as failures. Detection = predicted primary-metric "
               f"score below the model's own prediction for the unchanged control. Controls: false-alarm rate "
               f"{_fmt(c['false_alarm_rate'])} (any metric < 0.98 on an identical image), mean overall {_fmt(c['mean_pred_overall'])}.", "",
-              "| Edit | Level | Value | Primary metric | GT mean | Pred mean | MAE | Detection rate |", "|---|---|---|---|---|---|---|---|"]
+              "| Edit | Level | Value | Primary metric | GT mean | Pred mean | MAE | Valid comparisons | Detection conditional | Detection end-to-end |", "|---|---|---|---|---|---|---|---|---|---|"]
         for row in lad["rows"]:
             L.append(f"| {row['artifact_type']} | {row['level']} | {row['value']} | {METRIC_NAMES[row['primary_metric']]} | "
-                     f"{_fmt(row['gt_mean'])} | {_fmt(row['pred_mean'])} | {_fmt(row['MAE'])} | {_fmt(row['detection_rate'])} |")
+                     f"{_fmt(row['gt_mean'])} | {_fmt(row['pred_mean'])} | {_fmt(row['MAE'])} | {row.get('n_compared', row['n'])}/{row['n']} | {_fmt(row['detection_rate'])} | {_fmt(row.get('detection_rate_end_to_end'))} |")
         prec = lad.get("attribution_precision", {})
         if prec:
             L += ["", "Attribution precision (share of the predicted score drop that lands on the edited metric; "
@@ -271,11 +323,16 @@ def write_report(results: dict, rows_by_model: dict, out_dir: str, title: str = 
     L += ["", "## Quality gate (accept / reject) and explanation check", "",
           "| Measure | " + " | ".join(names) + " |", "|---|" + "---|" * len(names)]
     gate_rows = [("Gate threshold", lambda r: r["quality_gate"]["threshold"]),
-                 ("Decision accuracy", lambda r: r["quality_gate"]["decision_accuracy"]),
+                 ("Gate abstentions (missing/invalid outputs)", lambda r: r["quality_gate"].get("n_abstained")),
+                 ("Decision accuracy, valid outputs only", lambda r: r["quality_gate"]["decision_accuracy"]),
+                 ("Decision accuracy, all expected pairs", lambda r: r["quality_gate"].get("decision_accuracy_end_to_end")),
                  ("Reject precision", lambda r: r["quality_gate"]["reject_precision"]),
                  ("Reject recall", lambda r: r["quality_gate"]["reject_recall"]),
+                 ("Reject recall, all expected GT rejects", lambda r: r["quality_gate"].get("reject_recall_end_to_end")),
                  ("False-reject rate", lambda r: r["quality_gate"]["false_reject_rate"]),
                  ("Diagnosis accuracy (right metric blamed)", lambda r: r["quality_gate"]["diagnosis_accuracy"]),
+                 ("Diagnosis success, all expected GT rejects", lambda r: r["quality_gate"].get("diagnosis_accuracy_end_to_end")),
+                 ("Explanation coverage", lambda r: r.get("explanations", {}).get("explanation_coverage")),
                  ("Explanation: location correct", lambda r: r.get("explanations", {}).get("location_accuracy")),
                  ("Explanation: quantity correct", lambda r: r.get("explanations", {}).get("quantity_accuracy"))]
     for label, fn in gate_rows:
@@ -286,5 +343,6 @@ def write_report(results: dict, rows_by_model: dict, out_dir: str, title: str = 
     with open(os.path.join(out_dir, "evaluation_report.md"), "w") as f:
         f.write("\n".join(L) + "\n")
     with open(os.path.join(out_dir, "evaluation_results.json"), "w") as f:
-        json.dump({n: {k: v for k, v in r.items() if k not in ("error_rows",)} for n, r in results.items()}, f, indent=1, default=str)
+        json.dump(finite_json({n: {k: v for k, v in r.items() if k not in ("error_rows",)} for n, r in results.items()}),
+                  f, indent=1, allow_nan=False)
     return os.path.join(out_dir, "evaluation_report.md")
