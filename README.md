@@ -4,13 +4,20 @@ End-to-end pipeline: **dataset with pre-defined ground-truth scores -> pairwise 
 benchmark -> QLoRA fine-tuning -> CoT inference -> validation gate -> Python score engine ->
 agreement analytics -> diagnostic audit.**
 
+## Sanjana's model comparison: SmolVLM2
+This fork uses **`HuggingFaceTB/SmolVLM2-2.2B-Instruct`** (Apache-2.0, SmolLM2 + SigLIP),
+an independent model family from the original Qwen2.5-VL experiment. See
+[`MODEL_CHANGE.md`](MODEL_CHANGE.md) for the exact scope, verification and Colab instructions.
+Generation, ground-truth labels, splits, P1-P4 prompts, QLoRA hyperparameters and evaluation stay unchanged.
+
 ## How to run
 - **With Claude Code (local GPU):** open this folder in Claude Code and say
   *"Follow CLAUDE.md and run the whole pipeline."* It handles setup, fixes and the final report.
 - **Manually:** see the numbered steps in `CLAUDE.md`, or `./run_all.sh`.
 - **Google Colab:** upload this zip to Drive, open `colab_run_pipeline.ipynb`, choose a GPU runtime, Run all.
 
-Hardware: NVIDIA GPU with >= 16 GB VRAM recommended (12 GB works with lower `max_pixels`).
+Hardware: NVIDIA GPU with >= 16 GB VRAM recommended; Colab reduces `model.image_longest_edge` to 768 on T4.
+Run the GPU smoke test to check actual memory use before long stages.
 Rough times: dataset 15-30 min (CPU), prompt study + baseline 1-3 h, training 2-6 h, final inference 1-2 h.
 
 ## The dataset: the "24 generation" minute-change ladder (`prism/ladder.py`)
@@ -53,7 +60,7 @@ Drop your own photos into `assets/photos/` and the flyer/menu/form photo areas w
   `pilot/sheets/` and `pilot_metadata.json` - a visual sanity check of each artifact type.
 
 ## Model pipeline (matches the Training & Evaluation slide)
-1. Training inputs - pairwise JSONL, Qwen2.5-VL processor (image tokens never truncated), 4-bit NF4 base.
+1. Training inputs - pairwise JSONL, native SmolVLM2 processor (image tokens never truncated), 4-bit NF4 base.
 2. QLoRA adapters - all-linear, r 16 / alpha 32 / dropout 0.05.
 3. Optimisation - TRL SFTTrainer, cosine LR, warmup 5%, grad-accum 16, validation checkpointing.
 4. Validation gate - JSON schema + numeric range check, one retry, failures logged (`prism/validation.py`).
@@ -87,8 +94,8 @@ Coverage: valid-output rate after the gate. Baseline vs fine-tuned side by side.
    repair action for any original/edited pair; the evaluation reports gate accuracy and diagnosis accuracy.
 6. **It improves itself.** `08_data_engine.py` generates new training data only for the defects the model
    still misses, round after round.
-7. **It generalises and scales.** 23 document/UI types with an unseen-template test option; the same code
-   runs a 3B model on a free T4 (fp16) or a 7B/32B model on bigger GPUs (config presets).
+7. **It tests generalisation.** 23 document/UI types with an unseen-template test option; this fork
+   runs the 2.2B SmolVLM2 comparison with fp16/SDPA and 4-bit weights for limited-VRAM GPUs.
 8. **Sanity built in.** Unchanged controls measure false alarms; ordering across levels measures consistency.
 
 ## No manual annotation

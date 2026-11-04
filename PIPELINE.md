@@ -105,13 +105,15 @@ Base model untouched (4-bit), on a fixed seeded subset of **validation** (`promp
 Selected prompt on the full **test** split -> `predictions/baseline_zero_shot_test.jsonl`.
 
 ## [6] QLoRA fine-tuning - `scripts/04_train_qlora.py`
-- **Model**: `Qwen/Qwen2.5-VL-3B-Instruct`, bitsandbytes **4-bit NF4, double quant**, compute dtype
+- **Model**: `HuggingFaceTB/SmolVLM2-2.2B-Instruct`, bitsandbytes **4-bit NF4, double quant**, compute dtype
   bf16 if supported else fp16 (T4 -> fp16); `prepare_model_for_kbit_training`; SDPA attention.
-- **Vision input**: dynamic resolution, `min_pixels 200,704` / `max_pixels 501,760` (T4) ->
-  256-640 visual tokens per image (one token per 28×28 px). `max_seq_len 4096`, **never truncated**
+- **Vision input**: native SmolVLM tiling, `image_longest_edge 1152` (768 on T4),
+  384 px tiles plus an overview, 81 visual tokens per tile. Original and Release stay in the
+  same conversation, as a nested pair. `max_seq_len 4096`, **never truncated**
   (over-length raises an error).
 - **Collator**: chat template (system + "ORIGINAL:" img + "RELEASE:" img + P4 + target); labels = −100
-  before the `<|im_start|>assistant\n` marker and on padding -> loss only on CoT + JSON.
+  before the assistant header derived from the checkpoint's chat template, on image tokens and
+  on padding -> loss only on CoT + JSON.
 - **LoRA**: `target_modules = all-linear`, r 16, α 32, dropout 0.05, bias none.
 - **Optimisation**: TRL `SFTTrainer` (fallback: `transformers.Trainer`), batch 1 × grad-accum 16,
   LR 1e-4 cosine, warmup 5%, weight decay 0.01, max grad norm 1.0, `paged_adamw_8bit`,
@@ -180,6 +182,7 @@ within 25 % or 1 unit). It measures whether the written reason is true, not only
 | `prism-vlm-finish` (GPU) | stages 7-10 | code + datagen + baseline + train outputs |
 
 - One GPU session at a time (free tier); each stage in its own session so memory is not shared.
-- T4 overrides: `max_pixels 501760`, `inference.batch_size 2`, `train.epochs 2`, `prompt_study_n 30`.
+- Colab T4 overrides: `model.image_longest_edge 768`, `inference.batch_size 2`.
+  Training hyperparameters, prompt-study size and evaluation remain those of `configs/config.yaml`.
 - Each session stops itself at 10.5 h so its output is always saved; state lives in
   `/kaggle/working/state` and is merged into the next session.

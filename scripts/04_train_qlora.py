@@ -1,6 +1,6 @@
 """Stage 4 - QLoRA supervised fine-tuning (GPU).
 
-Qwen2.5-VL-3B-Instruct in 4-bit NF4 + LoRA (r16 / alpha32 / dropout .05 / all-linear), TRL SFTTrainer,
+SmolVLM2-2.2B-Instruct in 4-bit NF4 + LoRA (r16 / alpha32 / dropout .05 / all-linear), TRL SFTTrainer,
 cosine LR, warmup, gradient accumulation. Loss is computed ONLY on the assistant answer
 (<analysis> CoT + JSON). Image tokens are never truncated: a sequence longer than max_seq_len aborts.
 
@@ -24,20 +24,19 @@ import numpy as np
 import torch
 from datasets import Dataset
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from qwen_vl_utils import process_vision_info
 from transformers import TrainerCallback, set_seed
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from prism.common import P, abspath, load_config, read_jsonl  # noqa: E402
 from prism.metrics import METRIC_KEYS  # noqa: E402
-from prism.prompts import PROMPTS, TRAIN_PROMPT, build_messages  # noqa: E402
-from prism.vlm import VLMClass, bnb_config, compute_dtype, load_processor, predict  # noqa: E402
+from prism.prompts import PROMPTS, TRAIN_PROMPT  # noqa: E402
+from prism.vlm import VLMClass, assistant_marker, bnb_config, compute_dtype, encode_pairs, load_processor, predict  # noqa: E402
 
 
 class Collator:
     def __init__(self, proc, cfg):
         self.proc, self.cfg = proc, cfg
-        self.marker = proc.tokenizer.encode("<|im_start|>assistant\n", add_special_tokens=False)
+        self.marker = assistant_marker(proc)
         self.max_len = cfg["model"]["max_seq_len"]
 
     def _start(self, ids):
@@ -48,19 +47,15 @@ class Collator:
         raise ValueError("assistant marker not found")
 
     def __call__(self, batch):
-        mc = self.cfg["model"]
-        msgs = [build_messages(abspath(b["original_image_path"]), abspath(b["release_image_path"]), PROMPTS[TRAIN_PROMPT],
-                               b["target"], mc["min_pixels"], mc["max_pixels"]) for b in batch]
-        texts = [self.proc.apply_chat_template(m, tokenize=False, add_generation_prompt=False) for m in msgs]
-        images, _ = process_vision_info(msgs)
-        enc = self.proc(text=texts, images=images, padding=True, return_tensors="pt")
+        enc = encode_pairs(self.proc, batch, PROMPTS[TRAIN_PROMPT], [b["target"] for b in batch], padding_side="right")
         if enc["input_ids"].shape[1] > self.max_len:
             raise RuntimeError(f"sequence length {enc['input_ids'].shape[1]} > max_seq_len {self.max_len}; "
-                               "raise model.max_seq_len or lower model.max_pixels (never truncate image tokens)")
+                               "raise model.max_seq_len or lower model.image_longest_edge (never truncate image tokens)")
         labels = enc["input_ids"].clone()
         labels[enc["attention_mask"] == 0] = -100
         for i, ids in enumerate(enc["input_ids"].tolist()):
             labels[i, : self._start(ids)] = -100
+        labels[enc["input_ids"] == self.proc.tokenizer.convert_tokens_to_ids(self.proc.image_token)] = -100
         enc["labels"] = labels
         return enc
 

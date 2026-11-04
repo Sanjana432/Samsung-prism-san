@@ -8,13 +8,8 @@ import os
 import time
 
 import torch
-from qwen_vl_utils import process_vision_info
-from transformers import AutoProcessor, BitsAndBytesConfig
-
-try:
-    from transformers import Qwen2_5_VLForConditionalGeneration as VLMClass
-except ImportError:  # newer transformers
-    from transformers import AutoModelForImageTextToText as VLMClass
+from PIL import Image
+from transformers import AutoProcessor, BitsAndBytesConfig, SmolVLMForConditionalGeneration as VLMClass
 
 from .common import abspath
 from .prompts import PROMPTS, RETRY, build_messages
@@ -32,9 +27,53 @@ def compute_dtype():
 
 def load_processor(cfg, padding_side="left"):
     m = cfg["model"]
-    proc = AutoProcessor.from_pretrained(m["base"], min_pixels=m["min_pixels"], max_pixels=m["max_pixels"])
+    proc = AutoProcessor.from_pretrained(m["base"])
+    # Set both copies: SmolVLM caches the image size at construction. Passing `size` to
+    # AutoProcessor also puts it in tokenizer init_kwargs in 4.51.3, causing duplicate kwargs.
+    proc.image_processor.size = {"longest_edge": m["image_longest_edge"]}
+    proc.image_size = proc.image_processor.size
     proc.tokenizer.padding_side = padding_side
     return proc
+
+
+def assistant_marker(proc):
+    """Derive the answer header from this checkpoint's template, rather than a Qwen token literal."""
+    conversation = [{"role": "user", "content": [{"type": "text", "text": ""}]}]
+    before = proc.apply_chat_template(conversation, tokenize=False, add_generation_prompt=False)
+    after = proc.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True)
+    if not after.startswith(before):
+        raise ValueError("chat template does not append an assistant generation header")
+    marker = proc.tokenizer.encode(after[len(before):], add_special_tokens=False)
+    if not marker:
+        raise ValueError("chat template has no assistant generation header")
+    return marker
+
+
+def encode_pairs(proc, items, prompt, targets=None, padding_side="left"):
+    """Keep each Original/Release together: SmolVLM expects a nested image list per conversation.
+
+    Prompt wording, image order and training targets are the same as in the Qwen experiment.
+    Only the checkpoint's chat template and native image processor change.
+    """
+    if targets is not None and len(targets) != len(items):
+        raise ValueError("one training target is required per image pair")
+    messages, images = [], []
+    for i, item in enumerate(items):
+        original = abspath(item["original_image_path"])
+        release = abspath(item["release_image_path"])
+        messages.append(build_messages(original, release, prompt, None if targets is None else targets[i]))
+        pair = []
+        for path in (original, release):
+            with Image.open(path) as image:
+                pair.append(image.convert("RGB"))
+        images.append(pair)
+    texts = [proc.apply_chat_template(m, tokenize=False, add_generation_prompt=targets is None) for m in messages]
+    old = proc.tokenizer.padding_side
+    try:
+        proc.tokenizer.padding_side = padding_side
+        return proc(text=texts, images=images, padding=True, truncation=False, return_tensors="pt")
+    finally:
+        proc.tokenizer.padding_side = old
 
 
 def bnb_config(cfg):
@@ -57,15 +96,7 @@ def load_model(cfg, adapter: str | None = None):
 
 @torch.no_grad()
 def generate(model, proc, cfg, items: list, prompt: str, max_new_tokens: int) -> list:
-    m = cfg["model"]
-    msgs = [build_messages(abspath(it["original_image_path"]), abspath(it["release_image_path"]), prompt,
-                           min_pixels=m["min_pixels"], max_pixels=m["max_pixels"]) for it in items]
-    texts = [proc.apply_chat_template(x, tokenize=False, add_generation_prompt=True) for x in msgs]
-    images, _ = process_vision_info(msgs)
-    old = proc.tokenizer.padding_side
-    proc.tokenizer.padding_side = "left"
-    inputs = proc(text=texts, images=images, padding=True, return_tensors="pt").to(model.device)
-    proc.tokenizer.padding_side = old
+    inputs = encode_pairs(proc, items, prompt).to(model.device, dtype=compute_dtype())
     out = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False, temperature=None, top_p=None,
                          top_k=None, use_cache=True, pad_token_id=proc.tokenizer.pad_token_id)
     return proc.batch_decode(out[:, inputs["input_ids"].shape[1]:], skip_special_tokens=True)
