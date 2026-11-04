@@ -171,7 +171,7 @@ class NativePhiVisionTests(unittest.TestCase):
 
     def test_real_full_page_and_twelve_metric_reasoning_fit(self):
         from prism.ladder import make_ladder_sample
-        with tempfile.TemporaryDirectory(dir=Path(ROOT) / "models") as directory:
+        with tempfile.TemporaryDirectory(dir=ROOT, prefix="phi_context_") as directory:
             cfg = copy.deepcopy(self.cfg)
             cfg["paths"]["images_dir"] = os.path.relpath(directory, ROOT)
             record = make_ladder_sample(cfg, 0)
@@ -186,6 +186,22 @@ class NativePhiVisionTests(unittest.TestCase):
             self.assertLessEqual(batch["input_ids"].shape[1], cfg["model"]["max_seq_len"])
             print(f"[Phi real page] 768x1024, 12 reasoning lines: seq={batch['input_ids'].shape[1]}, "
                   f"supervised={int((batch['labels'] != -100).sum())}, num_crops={self.proc.image_processor.num_crops}")
+
+    def test_native_prediction_manifest_roundtrip(self):
+        """Real native processor settings must serialize and bind a resumable prediction run."""
+        from types import SimpleNamespace
+        from prism.runtime import digest
+        model = SimpleNamespace(config=SimpleNamespace(_commit_hash="cpu-integration-fixture"))
+        out = str(Path(self.temp.name) / "native_predictions.jsonl")
+        with patch("prism.vlm.generate", return_value=[ANSWER] * len(self.items)) as generator:
+            original = predict(model, self.proc, self.cfg, self.items, "P4", out_path=out, batch_size=2)
+            self.assertEqual(generator.call_count, 1)
+        manifest = json.loads(Path(out + ".manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["fingerprint"], digest(manifest["identity"]))
+        with patch("prism.vlm.generate") as generator:
+            resumed = predict(model, self.proc, self.cfg, self.items, "P4", out_path=out, batch_size=2)
+            generator.assert_not_called()
+        self.assertEqual(original, resumed)
 
     def test_generate_decodes_only_new_tokens_and_preserves_output_schema(self):
         model = MagicMock(device=torch.device("cpu"))

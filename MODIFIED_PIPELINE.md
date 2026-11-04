@@ -49,6 +49,7 @@ validated and atomically published. Reruns reuse verified images instead of over
 them. Controls must be pixel-identical; edits must change pixels inside the allowed region.
 IDs, dimensions, complete severity ladders and finite ground-truth scores are checked.
 Labels remain deterministic synthetic renderer measurements, not human judgments.
+Configuration and JSONL text use explicit UTF-8 on Windows and Linux.
 
 **Shared splits:** every Original stays in exactly one split. Duplicate Originals and pair
 IDs are rejected; existing assignments are frozen. Validation runs before publication;
@@ -76,6 +77,8 @@ retry text stays attached to its final scores for honest explanation evaluation.
 **Evaluation:** missing outputs remain in the full ground-truth denominator. Invalid,
 duplicate and unknown records are handled explicitly. Rankings are tie-aware and report
 incomplete groups; missing controls cannot become an imaginary perfect reference.
+The release spreadsheet includes every expected edited release and its valid/invalid/missing
+status; an incomplete group has no declared best release.
 Explanations that are missing are counted as missing rather than excluded from accuracy.
 Legitimate multi-metric effects, such as a bold font-family edit, receive attribution credit.
 Conditional results, end-to-end coverage and common-valid-subset comparisons are identified
@@ -101,6 +104,31 @@ Gemma E2B has about 5.1B total parameters, so its effective-size name is not a G
 promise. The GPU smoke test remains necessary on the actual Colab allocation for every model.
 
 ## Verification and recovery
+
+Verified locally on 4 November 2026, with each model's own dependencies and real
+processor-only snapshot:
+
+| Branch model | Tests passed | Skipped |
+|---|---:|---:|
+| SmolVLM2 | 71 | 0 |
+| Gemma 4 E2B | 72 | 0 |
+| InternVL 3.5 | 71 | 0 |
+| Phi-3.5 Vision | 71 | 0 |
+
+The 285 checks across the four branches cover data integrity, resume identity, invalid
+outputs, evaluation coverage/ranking, checkpoint selection and each native model integration.
+Tiny randomly initialized real architectures exercise forward/backward and adapter reload;
+the Gemma suite also runs an actual one-step TRL trainer check. These do not measure the
+pretrained weights.
+
+A separate CPU end-to-end pilot generated 3 Originals and 75 pairs (3 unchanged controls
+plus 72 edited releases, 78 images). All 900 metric labels were independently reproduced
+with zero mismatches; all 75 locality checks passed, all controls were pixel-identical and
+all 72 edits changed pixels. Dataset validation, split publication, all 23 renderer-template
+identity checks and mock-predictor Excel/figure reporting completed successfully. All
+41 Python files and 10 notebook cells in each branch passed syntax/structure checks.
+An additional UTF-8 metadata round-trip passed in each branch with Python UTF-8 mode disabled.
+Generated pilot data and mock reports are ignored, not distributed as model results.
 
 ```bash
 python -m unittest discover -s tests -v

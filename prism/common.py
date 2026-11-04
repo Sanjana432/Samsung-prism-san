@@ -15,7 +15,7 @@ MODEL_FILES = ["config.json", "preprocessor_config.json", "tokenizer.json", "tok
 
 def load_config(path: str | None = None) -> dict:
     path = path or os.path.join(ROOT, "configs", "config.yaml")
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
     cfg["_root"] = ROOT
     local = cfg["model"].get("local_dir")
@@ -64,12 +64,12 @@ def abspath(rel: str) -> str:
 
 
 def read_jsonl(path: str) -> list:
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return [json.loads(l) for l in f if l.strip()]
 
 
 def write_jsonl(path: str, rows) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         for r in rows:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")

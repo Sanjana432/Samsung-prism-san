@@ -1,6 +1,10 @@
 # PRISM comparison: Phi-3.5 Vision
 
-This branch replaces only the model integration with
+> This is the improved `codex/phi35-model-modified` branch. Start with
+> [MODIFIED_PIPELINE.md](MODIFIED_PIPELINE.md) for the current run instructions,
+> shared pipeline fixes, verification evidence and remaining GPU checks.
+
+This branch uses
 [`microsoft/Phi-3.5-vision-instruct`](https://huggingface.co/microsoft/Phi-3.5-vision-instruct).
 Microsoft releases this 4.2B multimodal model under MIT and explicitly supports optical character
 recognition, document understanding and multiple-image comparison. This is a research candidate;
@@ -25,21 +29,19 @@ minute-change detection accuracy on PRISM must be established by the shared benc
   NF4/double quantization, native fp16 on T4 (bf16 only on supporting GPUs), eager attention.
   FlashAttention is not required.
 
-Only `model` configuration, its integration/dependencies, training collation, GPU smoke loading,
-the model-specific Colab setup and model documentation/tests change. The renderer, all 23 templates,
-24-release ladder, ground truth, grouped splits, P1-P4 rubric text, target text, 12 metrics, QLoRA
-r/alpha/dropout/target modules, optimization, validation checkpoint rule, output schema, retry/resume,
-rankings and evaluation code are preserved. The previous local website is unchanged.
+The renderer, templates, 24-release design, metric definitions, P1-P4 wording and QLoRA hyperparameters retain the team experiment.
+This improved branch also adds shared data, checkpoint, prediction and evaluation fixes in
+[MODIFIED_PIPELINE.md](MODIFIED_PIPELINE.md).
 
 ## Access and run
 
-1. [Open this branch in GitHub](https://github.com/Sanjana432/Samsung-prism-san/tree/codex/phi35-model)
-   or [open its notebook in Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/phi35-model/colab_run_pipeline.ipynb).
-2. Choose a GPU runtime. The notebook clones this branch into `MyDrive/prism_ladder_phi35`,
+1. [Open this branch in GitHub](https://github.com/Sanjana432/Samsung-prism-san/tree/codex/phi35-model-modified)
+   or [open its notebook in Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/phi35-model-modified/colab_run_pipeline.ipynb).
+2. Choose a GPU runtime. The notebook clones this branch into `MyDrive/prism_ladder_phi35_modified`,
    keeping weights, adapters, predictions and reports separate from the other model versions.
 3. Copy the team's identical `data/` folder (images, metadata and splits) into that workspace
    before running dataset cells if it already exists. Do not copy another model's `outputs/`
-   or `predictions/`. Generation remains available with unchanged seeds and code.
+   or `predictions/`. Generation remains available with the same stimulus design and new recovery checks.
 4. Install the branch's `requirements.txt` and run the existing dataset checks, then
    `scripts/gpu_smoke_test.py` before longer model stages. The smoke test measures real 4-bit
    inference, a LoRA backward step and peak CUDA memory. On T4 the notebook reduces inference
@@ -48,7 +50,10 @@ rankings and evaluation code are preserved. The previous local website is unchan
 5. Run the existing prompt study, zero-shot baseline, training, inference and evaluation cells.
    Compare scores using the same source IDs, releases, split manifest, prompt rubric and metrics.
 
-## Verification scope
+## Initial model integration verification
+
+The results below describe the original model integration. For the expanded modified-branch
+regressions and CPU pilot, see [MODIFIED_PIPELINE.md](MODIFIED_PIPELINE.md).
 
 Verified on 4 November 2026: **14/14 integration tests passed** with Transformers 4.46.3,
 PEFT 0.15.2, TRL 0.17.0, CPU PyTorch 2.14.0 and torchvision 0.29.0. The real 768x1024
