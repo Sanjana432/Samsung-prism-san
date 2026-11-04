@@ -4,7 +4,7 @@
 2. generates on 2 validation pairs with P4 and runs the validation gate
 3. builds a training batch with the collator: checks label masking and sequence length
 4. one forward + backward pass through the LoRA-wrapped model
-5. prints peak VRAM and a recommendation for batch size / image_longest_edge
+5. prints peak VRAM and a recommendation for batch size / max_image_patches
 """
 
 import importlib.util
@@ -65,7 +65,7 @@ def main():
     print(f"[smoke] train step OK, loss={loss.item():.3f}, peak VRAM {peak:.2f} GB")
     total = g.total_memory / 2**30
     if peak > 0.85 * total:
-        print("[smoke] RECOMMEND: lower model.image_longest_edge to 768 (or 384) and inference.batch_size to 1")
+        print("[smoke] RECOMMEND: lower model.max_image_patches to 2 (or 1) and inference.batch_size to 1")
     elif total >= 40:
         print("[smoke] RECOMMEND: you can raise inference.batch_size to 8")
     print("SMOKE TEST PASSED")

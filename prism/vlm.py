@@ -9,7 +9,7 @@ import time
 
 import torch
 from PIL import Image
-from transformers import AutoProcessor, BitsAndBytesConfig, SmolVLMForConditionalGeneration as VLMClass
+from transformers import AutoProcessor, BitsAndBytesConfig, InternVLForConditionalGeneration as VLMClass
 
 from .common import abspath
 from .prompts import PROMPTS, RETRY, build_messages
@@ -28,10 +28,8 @@ def compute_dtype():
 def load_processor(cfg, padding_side="left"):
     m = cfg["model"]
     proc = AutoProcessor.from_pretrained(m["base"])
-    # Set both copies: SmolVLM caches the image size at construction. Passing `size` to
-    # AutoProcessor also puts it in tokenizer init_kwargs in 4.51.3, causing duplicate kwargs.
-    proc.image_processor.size = {"longest_edge": m["image_longest_edge"]}
-    proc.image_size = proc.image_processor.size
+    # Keep the pretrained 448-pixel vision grid; cap dynamic tiles instead of changing its geometry.
+    proc.image_processor.max_patches = m["max_image_patches"]
     proc.tokenizer.padding_side = padding_side
     return proc
 
@@ -50,7 +48,7 @@ def assistant_marker(proc):
 
 
 def encode_pairs(proc, items, prompt, targets=None, padding_side="left"):
-    """Keep each Original/Release together: SmolVLM expects a nested image list per conversation.
+    """Keep each Original/Release together, in native InternVL image/text order.
 
     Prompt wording, image order and training targets are the same as in the Qwen experiment.
     Only the checkpoint's chat template and native image processor change.
@@ -71,7 +69,9 @@ def encode_pairs(proc, items, prompt, targets=None, padding_side="left"):
     old = proc.tokenizer.padding_side
     try:
         proc.tokenizer.padding_side = padding_side
-        return proc(text=texts, images=images, padding=True, truncation=False, return_tensors="pt")
+        return proc(text=texts, images=images, padding=True, padding_side=padding_side,
+                    truncation=False, return_tensors="pt",
+                    images_kwargs={"crop_to_patches": True, "max_patches": proc.image_processor.max_patches})
     finally:
         proc.tokenizer.padding_side = old
 

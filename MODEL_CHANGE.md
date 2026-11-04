@@ -1,97 +1,83 @@
-# Sanjana's PRISM model comparison: SmolVLM2
+# Sanjana's PRISM comparison: InternVL3.5-2B
 
-This branch replaces the Qwen2.5-VL-3B integration with
-[`HuggingFaceTB/SmolVLM2-2.2B-Instruct`](https://huggingface.co/HuggingFaceTB/SmolVLM2-2.2B-Instruct).
-It keeps the team's experiment and evaluation pipeline in place.
+This branch uses [OpenGVLab/InternVL3_5-2B-HF](https://huggingface.co/OpenGVLab/InternVL3_5-2B-HF),
+with the native Transformers InternVL implementation and Apache-2.0 weights.
 
 ## Why this model
 
-- It is an Apache-2.0 model with a SmolLM2 language decoder and SigLIP vision encoder, providing
-  a model family independent of Qwen for the team comparison.
-- It accepts multiple images in one conversation and has native support in the repository's
-  existing `transformers==4.51.3`, including PEFT/LoRA training.
-- Its 2.2B size makes it a practical candidate for limited-memory Colab GPUs. The integration
-  retains 4-bit NF4/double quantization, native fp16 on T4 and SDPA attention; FlashAttention is not required.
-- This is a choice based on architecture, features and resource constraints. It is not a claim
-  that SmolVLM2 outperforms Qwen, or that its minute-change accuracy has already been measured.
+InternVL provides a document-capable vision encoder and dynamic image tiling in a compact model.
+It supports Original + Release in one conversation and native 4-bit loading.
+It is a different VLM architecture from Qwen2.5-VL, but **its text decoder is Qwen3**. Therefore
+this is an architecture-level comparison, not a claim that all four models have unrelated language
+backbones. SmolVLM2, Gemma and Phi provide the more independent model-family comparisons.
 
-## Exact change scope
+Sources: [official checkpoint](https://huggingface.co/OpenGVLab/InternVL3_5-2B-HF),
+[native Transformers documentation](https://huggingface.co/docs/transformers/v4.56.2/model_doc/internvl).
+These capabilities motivate the choice; they do not establish minute-change accuracy on PRISM.
 
-| File | Model-related change |
-|---|---|
-| `configs/config.yaml` | SmolVLM2 model ID, separate local checkpoint directory, native image-size setting |
-| `prism/vlm.py` | Native model class, paired-image processing, template-derived assistant header, floating-point vision input dtype |
-| `scripts/04_train_qlora.py` | Use the shared SmolVLM pair encoder and native assistant/image label mask |
-| `prism/common.py` | Validate SmolVLM local checkpoint files; allow single or sharded safetensors weights |
-| `requirements.txt` | Replace `qwen-vl-utils` with the SmolVLM processor's `num2words` dependency |
-| `colab_run_pipeline.ipynb` | Clone this model branch into its own Drive workspace and use SmolVLM T4 image settings |
-| `scripts/gpu_smoke_test.py` | Update the model-specific image-size recommendation |
-| `tests/test_smolvlm.py` | Integration regression checks |
-| `README.md`, `PIPELINE.md`, this file | Model identification and run instructions |
+## Exact scope
 
-The renderer, all 23 templates, 24-release ladder, measured ground truth, metric definitions,
-P1-P4 prompt text, target text, split assignment, QLoRA r/alpha/dropout/target modules, optimization,
-checkpoint selection, validation gate/retry rules, ranking and evaluation calculations are unchanged.
-No website files are present in this upstream repository; the earlier local PRISM site is unchanged.
+Only the model integration, model dependencies and model run instructions change:
+- Native `InternVLForConditionalGeneration` and `InternVLProcessor`.
+- `transformers==4.56.2`; the existing `trl==0.17.0` and `peft==0.15.2` are retained.
+- Native 448 px tiles, capped by `model.max_image_patches: 4`; 256 visual tokens per tile.
+  The processor may add an overview when it splits an image. No extra ROI detector or scoring aid.
+- Paired image ordering, model-specific assistant token masking, left padding for generation
+  and right padding for supervised training, without image-token truncation.
+- A separate model checkpoint directory and Drive workspace.
 
-## Run on Colab
+The templates, 24-release generation ladder, labels, P1-P4 prompt wording, target text, splits,
+QLoRA r/alpha/dropout/all-linear targets, optimizer, training schedule, validation checkpoint
+selection, output gate/retry/resume logic, 12 metrics, score engine and evaluation remain unchanged.
+All non-model configuration sections match the original team configuration.
+No website files exist in this upstream repository; the earlier PRISM site is unchanged.
 
-1. [Open the model branch's notebook in Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/smolvlm2-model/colab_run_pipeline.ipynb).
-2. Select a GPU runtime. The setup downloads this branch into
-   `MyDrive/prism_ladder_smolvlm2`, separate from the Qwen experiment's `prism_ladder` folder.
-3. Run the setup cells. On GPUs below 20 GB the notebook sets
-   `model.image_longest_edge: 768` and `inference.batch_size: 2`.
-4. Use the **same original images, generated releases, metadata and split files** as the team's
-   Qwen comparison. Copy the existing `data/` directory into this model workspace before running
-   the dataset cells when it is already available. Do not copy Qwen's `outputs/`, `predictions/`
-   or model-specific reports. Dataset generation is still available, with the same seed and code,
-   if the team has not generated its shared dataset yet.
-5. Run `scripts/gpu_smoke_test.py` before the long model stages. It checks native processor input,
-   answer masking, inference, one real 4-bit LoRA forward/backward step and peak GPU memory.
-   If it runs out of memory, reduce inference batch size to 1 first; reducing image resolution
-   can remove the minute discrepancies being studied and must be recorded in the comparison.
-6. Run the existing prompt study/baseline, training, inference and evaluation cells. Stage names,
-   output formats and the 12 quality metrics remain the same.
+## Open and run
 
-For a fair cross-model comparison, match the sample IDs, train/validation/test membership, prompts
-and scoring rules, and record the model's preprocessing and training settings. The model's own
-tiling is different from Qwen's pixel-budget processor; there is no added crop, detector or scoring aid.
+[Open this branch's Colab notebook](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/internvl35-model/colab_run_pipeline.ipynb).
 
-## Verification
+1. Select a GPU runtime. The notebook clones branch `codex/internvl35-model` into
+   `MyDrive/prism_ladder_internvl35`.
+2. Supply the exact same team `data/` directory (originals, releases, metadata and split files)
+   used by the other model branches. Do not copy another model's adapters or predictions.
+   The unchanged generator is available if the shared dataset has not yet been created.
+3. Install requirements. On GPUs below 20 GB, the notebook uses four native patches/image and
+   inference batch size 2. Run the GPU smoke test before long stages.
+4. Run the existing prompt-study/baseline, QLoRA training, inference and evaluation cells.
+   Outputs remain in this model's separate workspace, with the same filenames and schemas.
+5. On GPU memory failure, lower inference batch size to 1 first. The smoke test suggests
+   lowering `model.max_image_patches` to 2 or 1 if necessary. Record any such reduction because
+   less image detail can hide the minute differences being studied.
 
-Verified locally on 4 November 2026: **13/13 integration tests passed** with the actual public
-processor files and `transformers==4.51.3`, `peft==0.15.2`, `trl==0.17.0` (CPU PyTorch 2.14.0).
-All 31 Python source files parse, the notebook JSON is valid, `git diff --check` passes and all
-non-model configuration sections match the original commit `1ae046558905c0bba20198ea077fec2cb0ffc627`.
-The unchanged repository CPU self-test passed, with the saved-dataset report test skipped as below.
+Weights use 4-bit NF4/double quantization; T4 uses fp16 and SDPA without FlashAttention.
+The actual full-checkpoint T4 memory requirement and training throughput need a GPU run.
 
-The integration suite uses the real public tokenizer, chat template and image processor, and a
-tiny randomly initialized instance of the actual SmolVLM architecture for CPU training checks.
-It does not use or measure the full pretrained checkpoint.
+## Software verification
+
+All 13 integration tests passed locally with Transformers 4.56.2, PEFT 0.15.2, TRL 0.17.0,
+CPU PyTorch 2.14.0 and torchvision 0.29.0. All Python source files and notebook JSON parse;
+the non-model configuration and prediction validation/retry/resume function match the team baseline.
+
+The integration tests use real checkpoint processor/tokenizer files and a tiny randomly initialized
+InternVL + Qwen3 architecture with the same LoRA settings for CPU forward/backward, finite gradient,
+adapter save/reload and generation checks. They test software compatibility, not pretrained accuracy.
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-Set `SMOLVLM_PROCESSOR_DIR` to a local copy of the model's processor/tokenizer files to enable all
-native-processor tests. Without it, those tests are explicitly skipped. No model weights are needed:
+Set `INTERNVL_PROCESSOR_DIR` to a local processor-only snapshot to enable native tests.
+They are explicitly skipped without it. To download these small files without model weights:
 
 ```python
 import os
 from huggingface_hub import snapshot_download
-os.environ['SMOLVLM_PROCESSOR_DIR'] = snapshot_download(
-    'HuggingFaceTB/SmolVLM2-2.2B-Instruct', allow_patterns=['*.json', '*.txt', '*.model'])
+os.environ["INTERNVL_PROCESSOR_DIR"] = snapshot_download(
+    "OpenGVLab/InternVL3_5-2B-HF", allow_patterns=["*.json", "*.txt", "*.jinja"])
 ```
 
-Then launch the unittest command in the same environment. The repository's unchanged CPU self-test is:
+Then run the unittest command in that environment. The full GPU smoke test checks real 4-bit
+loading, inference, masking, a LoRA forward/backward step and peak memory on your actual runtime.
 
-```bash
-python scripts/00_selftest.py
-```
-
-The CPU self-test covers all 23 template identity checks, measured-score fidelity, the validation
-gate, score engine and 3 complete 24-release ladders. Its saved-dataset report test is skipped
-when `data/pairs/test.jsonl` has not been generated. These are software checks, not model results.
-
-Full pretrained inference, 4-bit CUDA memory use, full QLoRA training and benchmark accuracy must
-still be verified on the Colab GPU. No accuracy figures or trained adapter are supplied by this change.
+Full pretrained inference, QLoRA training and test-set accuracy have not been run locally: this
+machine has CPU PyTorch. Do not treat the synthetic software test outputs as model results.

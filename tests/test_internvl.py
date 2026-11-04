@@ -1,8 +1,8 @@
 """Model-integration checks; no GPU or full model weights required.
 
 Run: python -m unittest discover -s tests -v
-Set SMOLVLM_PROCESSOR_DIR to a local snapshot of the model's public processor files
-to also run native-processor and tiny randomly initialised SmolVLM forward/backward tests.
+Set INTERNVL_PROCESSOR_DIR to a local snapshot of the model's public processor files
+to also run native-processor and tiny randomly initialised InternVL forward/backward tests.
 These checks establish integration correctness, not the pretrained model's accuracy or T4 VRAM use.
 """
 
@@ -27,7 +27,7 @@ from prism.vlm import assistant_marker, encode_pairs, generate, load_model, load
 
 SCORES = {k: round(1 - i * 0.02, 2) for i, k in enumerate(METRIC_KEYS)}
 ANSWER = "<analysis>\n- Comparison complete\n</analysis>\n" + json.dumps(SCORES)
-PROCESSOR_DIR = os.environ.get("SMOLVLM_PROCESSOR_DIR")
+PROCESSOR_DIR = os.environ.get("INTERNVL_PROCESSOR_DIR")
 
 
 def training_module():
@@ -44,7 +44,7 @@ class LocalCheckpointTests(unittest.TestCase):
         self.directory = Path(self.temp.name)
         for name in MODEL_FILES:
             self.write(name, {})
-        self.write("config.json", {"model_type": "smolvlm"})
+        self.write("config.json", {"model_type": "internvl"})
         self.write("tokenizer_config.json", {"chat_template": "example template"})
 
     def write(self, name, value):
@@ -71,7 +71,7 @@ class LocalCheckpointTests(unittest.TestCase):
 
     def test_qwen_checkpoint_rejected(self):
         self.write("config.json", {"model_type": "qwen2_5_vl"})
-        with self.assertRaisesRegex(SystemExit, "not a SmolVLM"):
+        with self.assertRaisesRegex(SystemExit, "not an InternVL"):
             check_model_dir(str(self.directory))
 
     def test_no_cuda_fails_before_downloading_weights(self):
@@ -98,8 +98,8 @@ class ValidationContractTests(unittest.TestCase):
             self.assertEqual(rows, resumed)
 
 
-@unittest.skipUnless(PROCESSOR_DIR, "set SMOLVLM_PROCESSOR_DIR for native processor tests")
-class NativeSmolVLMTests(unittest.TestCase):
+@unittest.skipUnless(PROCESSOR_DIR, "set INTERNVL_PROCESSOR_DIR for native processor tests")
+class NativeInternVLTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         torch.set_num_threads(2)
@@ -123,20 +123,21 @@ class NativeSmolVLMTests(unittest.TestCase):
         self.proc.tokenizer.padding_side = "right"
 
     def test_native_resolution_setting_and_assistant_header(self):
-        self.assertEqual(self.proc.image_size["longest_edge"], self.cfg["model"]["image_longest_edge"])
-        self.assertEqual(self.proc.image_processor.size, self.proc.image_size)
-        self.assertEqual(self.proc.image_seq_len, 81)
+        self.assertEqual(self.proc.image_processor.max_patches, self.cfg["model"]["max_image_patches"])
+        self.assertEqual(self.proc.image_processor.size, {"height": 448, "width": 448})
+        self.assertEqual(self.proc.image_seq_length, 256)
         self.assertTrue(assistant_marker(self.proc))
 
     def test_pairs_remain_nested_ordered_and_padding_is_restored(self):
         with patch.object(self.proc.image_processor, "preprocess", wraps=self.proc.image_processor.preprocess) as vision:
             enc = encode_pairs(self.proc, self.items, PROMPTS[TRAIN_PROMPT])
-            images = vision.call_args.args[0]
-            self.assertEqual([len(pair) for pair in images], [2, 2])
-            self.assertEqual(images[0][0].getpixel((0, 0)), (40, 20, 10))
-            self.assertEqual(images[0][1].getpixel((0, 0)), (10, 30, 80))
-            self.assertEqual(images[1][0].getpixel((0, 0)), (100, 20, 10))
-        self.assertEqual(enc["pixel_values"].shape[0], 2)
+            images = vision.call_args.args[0] if vision.call_args.args else vision.call_args.kwargs["images"]
+            self.assertEqual(len(images), 4)
+            self.assertEqual(images[0].getpixel((0, 0)), (40, 20, 10))
+            self.assertEqual(images[1].getpixel((0, 0)), (10, 30, 80))
+            self.assertEqual(images[2].getpixel((0, 0)), (100, 20, 10))
+        self.assertEqual(enc["input_ids"].shape[0], 2)
+        self.assertGreaterEqual(enc["pixel_values"].shape[0], 4)
         self.assertEqual(self.proc.tokenizer.padding_side, "right")
         self.assertEqual(enc["attention_mask"][:, -1].tolist(), [1, 1])
         text = self.proc.tokenizer.decode(enc["input_ids"][0], skip_special_tokens=True)
@@ -187,27 +188,25 @@ class NativeSmolVLMTests(unittest.TestCase):
         self.assertFalse(kwargs["do_sample"])
 
     def test_tiny_real_model_lora_backward_adapter_reload_and_generation(self):
-        """Run the actual SmolVLM architecture with small random weights; this is not an accuracy test."""
+        """Run the actual InternVL architecture with small random weights; this is not an accuracy test."""
         from peft import LoraConfig, PeftModel, get_peft_model
-        from transformers import SmolVLMConfig, SmolVLMForConditionalGeneration
-        from transformers.models.smolvlm.configuration_smolvlm import SmolVLMVisionConfig
+        from transformers import InternVLConfig, InternVLForConditionalGeneration
+        from transformers import InternVLVisionConfig
 
         proc = copy.deepcopy(self.proc)
-        proc.image_size = {"longest_edge": 56}
-        proc.image_processor.size = proc.image_size
-        proc.image_processor.max_image_size = {"longest_edge": 28}
-        proc.image_seq_len = 1
-        config = SmolVLMConfig(
-            vision_config=SmolVLMVisionConfig(hidden_size=32, intermediate_size=64, num_hidden_layers=1,
-                                              num_attention_heads=4, image_size=28, patch_size=14),
-            text_config={"model_type": "llama", "hidden_size": 32, "intermediate_size": 64, "num_hidden_layers": 1,
-                         "num_attention_heads": 4, "num_key_value_heads": 2, "vocab_size": len(proc.tokenizer),
+        proc.image_processor.size = {"height": 28, "width": 28}
+        proc.image_seq_length = 1
+        config = InternVLConfig(
+            vision_config=InternVLVisionConfig(hidden_size=32, intermediate_size=64, num_hidden_layers=1,
+                                              num_attention_heads=4, image_size=[28, 28], patch_size=[14, 14]),
+            text_config={"model_type": "qwen3", "hidden_size": 32, "intermediate_size": 64, "num_hidden_layers": 1,
+                         "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 8, "vocab_size": len(proc.tokenizer),
                          "max_position_embeddings": 4096, "pad_token_id": proc.tokenizer.pad_token_id,
                          "bos_token_id": proc.tokenizer.bos_token_id, "eos_token_id": proc.tokenizer.eos_token_id},
-            scale_factor=2, image_token_id=proc.tokenizer.convert_tokens_to_ids(proc.image_token),
+            downsample_ratio=0.5, image_seq_length=1, image_token_id=proc.tokenizer.convert_tokens_to_ids(proc.image_token),
             pad_token_id=proc.tokenizer.pad_token_id,
         )
-        model = SmolVLMForConditionalGeneration(config)
+        model = InternVLForConditionalGeneration(config)
         model.config.use_cache = False
         q = self.cfg["qlora"]
         model = get_peft_model(model, LoraConfig(r=q["r"], lora_alpha=q["alpha"], lora_dropout=q["dropout"],
@@ -224,7 +223,7 @@ class NativeSmolVLMTests(unittest.TestCase):
         self.assertTrue(any(torch.count_nonzero(g) > 0 for g in grads))
         with tempfile.TemporaryDirectory() as directory:
             model.save_pretrained(directory)
-            reloaded = PeftModel.from_pretrained(SmolVLMForConditionalGeneration(config), directory)
+            reloaded = PeftModel.from_pretrained(InternVLForConditionalGeneration(config), directory)
             reloaded.eval()
             with patch("prism.vlm.compute_dtype", return_value=torch.float32):
                 raw = generate(reloaded, proc, self.cfg, self.items[:1], "Compare these two documents.", 2)

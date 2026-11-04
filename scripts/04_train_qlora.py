@@ -1,6 +1,6 @@
 """Stage 4 - QLoRA supervised fine-tuning (GPU).
 
-SmolVLM2-2.2B-Instruct in 4-bit NF4 + LoRA (r16 / alpha32 / dropout .05 / all-linear), TRL SFTTrainer,
+InternVL3_5-2B-HF in 4-bit NF4 + LoRA (r16 / alpha32 / dropout .05 / all-linear), TRL SFTTrainer,
 cosine LR, warmup, gradient accumulation. Loss is computed ONLY on the assistant answer
 (<analysis> CoT + JSON). Image tokens are never truncated: a sequence longer than max_seq_len aborts.
 
@@ -50,7 +50,7 @@ class Collator:
         enc = encode_pairs(self.proc, batch, PROMPTS[TRAIN_PROMPT], [b["target"] for b in batch], padding_side="right")
         if enc["input_ids"].shape[1] > self.max_len:
             raise RuntimeError(f"sequence length {enc['input_ids'].shape[1]} > max_seq_len {self.max_len}; "
-                               "raise model.max_seq_len or lower model.image_longest_edge (never truncate image tokens)")
+                               "raise model.max_seq_len or lower model.max_image_patches (never truncate image tokens)")
         labels = enc["input_ids"].clone()
         labels[enc["attention_mask"] == 0] = -100
         for i, ids in enumerate(enc["input_ids"].tolist()):
