@@ -182,7 +182,8 @@ class AccuracyIntegrityTests(unittest.TestCase):
         self.assertEqual(result["location_accuracy_given_explanation"], 1)
 
     def test_all_invalid_reports_are_writable_and_strict_json(self):
-        records = [row("a", pred=None, missing_prediction=True), row("b", pred=None)]
+        records = [row("a", pred=None, missing_prediction=True), row("b", pred=None),
+                   dict(row("c"), pred={**scores(.8), METRIC_KEYS[0]: "invalid"})]
         result = evaluate(records)
         with tempfile.TemporaryDirectory() as directory:
             write_report({"bad_a": result, "bad_b": result}, {"bad_a": records, "bad_b": records}, directory)
