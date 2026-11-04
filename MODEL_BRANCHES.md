@@ -53,6 +53,8 @@ merging the four model branches together is not necessary to run a comparison.
    model-specific Drive folder. Use a fresh runtime when moving between model families.
 4. Give each model the team's identical `data/` directory, including images, measured metadata
    and `data/pairs/{train,val,test}.jsonl`. Do not carry another model's checkpoints or predictions across.
+   To avoid storing four dataset copies, move that same `data/` folder between model workspaces
+   when switching runs; keep each model's own outputs and checkpoints in its original workspace.
 5. Run the GPU smoke test before the long stages. Then run prompt study/baseline, fine-tuning,
    inference and evaluation in the existing order. Keep saved output/checkpoints to resume later.
 6. The results are in each workspace's `reports/evaluation_report.md`,
