@@ -79,17 +79,46 @@ class TrainingIntegrityTests(unittest.TestCase):
 
     def test_manifest_refuses_stale_or_unidentified_outputs_and_preserves_them(self):
         out = self.root / "outputs"
-        identity = {"fingerprint": "a", "payload": {"model": "a"}}
-        self.assertEqual(ensure_training_run(out, identity), "a")
+        identity = training_identity(self.cfg, self.proc, [self.item], [self.val])
+        self.assertEqual(ensure_training_run(out, identity), identity["fingerprint"])
+        changed = training_identity(dict(self.cfg, project_seed=42), self.proc, [self.item], [self.val])
         with self.assertRaisesRegex(RuntimeError, "preserved"):
-            ensure_training_run(out, {"fingerprint": "b"})
-        self.assertEqual(json.loads((out / "training_manifest.json").read_text())["fingerprint"], "a")
+            ensure_training_run(out, changed)
+        self.assertEqual(json.loads((out / "training_manifest.json").read_text())["fingerprint"], identity["fingerprint"])
         old = self.root / "old"
         old.mkdir()
         (old / "weights").write_bytes(b"user work")
         with self.assertRaisesRegex(RuntimeError, "preserved"):
             ensure_training_run(old, identity)
         self.assertEqual((old / "weights").read_bytes(), b"user work")
+
+    def test_local_base_weight_and_custom_code_edits_change_training_identity(self):
+        base = self.root / "local_model"
+        base.mkdir()
+        weights = base / "model.safetensors"
+        weights.write_bytes(b"original weights")
+        cfg = copy.deepcopy(self.cfg)
+        cfg["model"]["base"] = str(base)
+        original = training_identity(cfg, self.proc, [self.item], [self.val])["fingerprint"]
+        weights.write_bytes(b"modified weights")
+        changed = training_identity(cfg, self.proc, [self.item], [self.val])["fingerprint"]
+        self.assertNotEqual(original, changed)
+        (base / "modeling_custom.py").write_text("implementation = 2", encoding="utf-8")
+        self.assertNotEqual(changed, training_identity(cfg, self.proc, [self.item], [self.val])["fingerprint"])
+
+    def test_corrupt_training_manifest_payload_is_rejected_without_replacement(self):
+        out = self.root / "outputs"
+        identity = training_identity(self.cfg, self.proc, [self.item], [self.val])
+        ensure_training_run(out, identity)
+        corrupt = copy.deepcopy(identity)
+        corrupt["payload"]["seed"] = 99
+        atomic_json(out / "training_manifest.json", corrupt)
+        with self.assertRaisesRegex(RuntimeError, "corrupt.*preserved"):
+            ensure_training_run(out, identity)
+        self.assertEqual(json.loads((out / "training_manifest.json").read_text())["payload"]["seed"], 99)
+        with self.assertRaisesRegex(ValueError, "fingerprint"):
+            ensure_training_run(self.root / "invalid", corrupt)
+        self.assertFalse((self.root / "invalid").exists())
 
     def checkpoint(self, step, complete=True):
         path = self.root / "checkpoints" / f"checkpoint-{step}"
@@ -251,6 +280,19 @@ class TrainingIntegrityTests(unittest.TestCase):
         model.other_weight = torch.nn.Parameter(torch.ones(1))
         with self.assertRaisesRegex(RuntimeError, "unfrozen"):
             assert_lora_trainables(model)
+
+    def test_gradient_health_includes_every_lora_parameter(self):
+        model = Model()
+        model.lora_A = torch.nn.Parameter(torch.ones(3))
+        model.lora_B.grad = torch.zeros(1)
+        model.lora_A.grad = torch.ones(3)
+        assert_finite_training(model)
+        model.lora_A.grad[2] = float("nan")
+        with self.assertRaisesRegex(RuntimeError, "non-finite"):
+            assert_finite_training(model)
+        model.lora_A.grad[:] = 0
+        with self.assertRaisesRegex(RuntimeError, "zero"):
+            assert_finite_training(model)
 
 
 if __name__ == "__main__":

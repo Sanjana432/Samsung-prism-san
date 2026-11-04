@@ -116,7 +116,16 @@ def load_model(cfg, adapter: str | None = None):
 
 @torch.no_grad()
 def generate(model, proc, cfg, items: list, prompt: str, max_new_tokens: int) -> list:
-    inputs = encode_pairs(proc, items, prompt).to(model.device, dtype=compute_dtype())
+    if isinstance(max_new_tokens, bool) or not isinstance(max_new_tokens, int) or max_new_tokens < 1:
+        raise ValueError("max_new_tokens must be a positive integer")
+    inputs = encode_pairs(proc, items, prompt)
+    prompt_tokens = inputs["input_ids"].shape[1]
+    maximum = cfg["model"]["max_seq_len"]
+    if prompt_tokens + max_new_tokens > maximum:
+        raise RuntimeError(f"generation requires {prompt_tokens} prompt + {max_new_tokens} output tokens "
+                           f"> max_seq_len {maximum}; increase the configured context or record a lower "
+                           "native image budget; never truncate image tokens")
+    inputs = inputs.to(model.device, dtype=compute_dtype())
     out = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False, temperature=None, top_p=None,
                          top_k=None, use_cache=True, pad_token_id=proc.tokenizer.pad_token_id)
     return proc.batch_decode(out[:, inputs["input_ids"].shape[1]:], skip_special_tokens=True)
@@ -127,23 +136,38 @@ def predict(model, proc, cfg, items: list, prompt_id: str, out_path: str | None 
     """Validated inference with content-aware resume, one retry and crash-safe appends."""
     from .runtime import prepare_prediction_run
     inf = cfg["inference"]
-    bs = batch_size or inf["batch_size"]
-    if bs < 1:
-        raise ValueError("batch_size must be positive")
-    mnt = max_new_tokens or (inf["max_new_tokens"] if prompt_id == "P4" else 256)
+    bs = inf["batch_size"] if batch_size is None else batch_size
+    if isinstance(bs, bool) or not isinstance(bs, int) or bs < 1:
+        raise ValueError("batch_size must be a positive integer")
+    if isinstance(log_every, bool) or not isinstance(log_every, int) or log_every < 1:
+        raise ValueError("log_every must be a positive integer")
+    mnt = (inf["max_new_tokens"] if prompt_id == "P4" else 256) if max_new_tokens is None else max_new_tokens
+    if isinstance(mnt, bool) or not isinstance(mnt, int) or mnt < 1:
+        raise ValueError("max_new_tokens must be a positive integer")
     saved = prepare_prediction_run(model, cfg, items, prompt_id, mnt, out_path, processor=proc)
     done = {row["id"]: row for row in saved}
     todo = [item for item in items if item["id"] not in done]
     fh = open(out_path, "a", encoding="utf-8") if out_path else None
     t0 = time.time()
     try:
-        for i in range(0, len(todo), bs):
+        i = 0
+        while i < len(todo):
             batch = todo[i:i + bs]
+            reduce_batch = False
             try:
                 raws = generate(model, proc, cfg, batch, PROMPTS[prompt_id], mnt)
             except torch.cuda.OutOfMemoryError:
+                if len(batch) == 1:
+                    raise
+                reduce_batch = True
+            # Leave the exception handler first: its traceback retains the failed batch's
+            # device tensors until it is cleared. Remember the smaller batch for this run.
+            if reduce_batch:
                 torch.cuda.empty_cache()
-                raws = [generate(model, proc, cfg, [it], PROMPTS[prompt_id], mnt)[0] for it in batch]
+                bs = max(1, len(batch) // 2)
+                print(f"  [{prompt_id}] CUDA memory exhausted; retrying with batch_size={bs} "
+                      "(image detail unchanged)", flush=True)
+                continue
             if len(raws) != len(batch):
                 raise RuntimeError("model returned a different number of answers than input pairs")
             for it, raw in zip(batch, raws):
@@ -166,6 +190,7 @@ def predict(model, proc, cfg, items: list, prompt_id: str, out_path: str | None 
                 elapsed = time.time() - t0
                 print(f"  [{prompt_id}] {n}/{len(todo)}  {elapsed / n:.1f}s/pair  "
                       f"eta {elapsed / n * (len(todo) - n) / 60:.0f} min", flush=True)
+            i = n
     finally:
         if fh:
             fh.close()

@@ -23,51 +23,66 @@ def main():
     stages = ["data", "check"] if args.cpu_only else args.stages
     config_args = ["--config", str(Path(args.config).resolve())] if args.config else []
     history = {"model": cfg["model"], "started_utc": datetime.now(timezone.utc).isoformat(),
-               "status": "running", "stages": [], "accuracy_measured": False}
+               "status": "running", "requested_stages": stages, "stages": [], "accuracy_measured": False}
     status_path = P(cfg, "reports_dir", "pipeline_status.json")
 
     def run(script, *options):
         command = [sys.executable, str(ROOT / "scripts" / script), *config_args, *options]
         print("[pipeline] " + " ".join(command), flush=True)
         started = time.monotonic()
-        try:
-            subprocess.run(command, cwd=ROOT, check=True)
-        except subprocess.CalledProcessError as error:
-            history.update(status="failed", failed_script=script, exit_code=error.returncode)
-            atomic_json(status_path, history)
-            raise
+        history["current_script"] = script
+        atomic_json(status_path, history)
+        subprocess.run(command, cwd=ROOT, check=True)
         history["stages"].append({"script": script, "seconds": round(time.monotonic() - started, 2)})
+        history.pop("current_script", None)
         atomic_json(status_path, history)
 
     gpu_checked = False
-    for stage in stages:
-        if stage in ("baseline", "train", "infer") and not gpu_checked:
-            run("validate_dataset.py")
-            run("gpu_smoke_test.py")
-            gpu_checked = True
-        if stage == "data":
-            if not Path(P(cfg, "metadata_dir", "ladder.jsonl")).exists():
-                run("01_generate_dataset.py")
-            else:
-                count = len(read_jsonl(P(cfg, "metadata_dir", "ladder.jsonl")))
-                if count != cfg["ladder"]["n_originals"]:
-                    raise ValueError(f"Existing shared data has {count} Originals; configuration requests {cfg['ladder']['n_originals']}. "
-                                     "Use a matching configuration or a new dataset directory; existing images were preserved.")
-            run("02_build_splits.py")
-            run("validate_dataset.py")
-        elif stage == "check":
-            run("validate_dataset.py")
-            run("check_ladder_scores.py")
-            run("00_selftest.py")
-        elif stage == "baseline":
-            run("03_prompt_study_and_baseline.py")
-        elif stage == "train":
-            run("04_train_qlora.py")
-        elif stage == "infer":
-            run("05_infer.py", "--adapter", P(cfg, "outputs_dir", "best_adapter"), "--split", "test")
-        elif stage == "evaluate":
-            run("06_evaluate.py", "--models", "baseline_zero_shot", "finetuned_qlora", "--split", "test")
+    atomic_json(status_path, history)
+    try:
+        for stage in stages:
+            history["current_stage"] = stage
+            atomic_json(status_path, history)
+            if stage in ("baseline", "train", "infer") and not gpu_checked:
+                run("validate_dataset.py")
+                run("gpu_smoke_test.py")
+                gpu_checked = True
+            if stage == "data":
+                if not Path(P(cfg, "metadata_dir", "ladder.jsonl")).exists():
+                    run("01_generate_dataset.py")
+                else:
+                    count = len(read_jsonl(P(cfg, "metadata_dir", "ladder.jsonl")))
+                    if count != cfg["ladder"]["n_originals"]:
+                        raise ValueError(f"Existing shared data has {count} Originals; configuration requests {cfg['ladder']['n_originals']}. "
+                                         "Use a matching configuration or a new dataset directory; existing images were preserved.")
+                run("02_build_splits.py")
+                run("validate_dataset.py")
+            elif stage == "check":
+                run("validate_dataset.py")
+                run("check_ladder_scores.py")
+                run("00_selftest.py")
+            elif stage == "baseline":
+                run("03_prompt_study_and_baseline.py")
+            elif stage == "train":
+                run("04_train_qlora.py")
+            elif stage == "infer":
+                run("05_infer.py", "--adapter", P(cfg, "outputs_dir", "best_adapter"), "--split", "test")
+            elif stage == "evaluate":
+                run("06_evaluate.py", "--models", "baseline_zero_shot", "finetuned_qlora", "--split", "test")
+    except BaseException as error:
+        history.update(status="interrupted" if isinstance(error, KeyboardInterrupt) else "failed",
+                       error_type=type(error).__name__, error_message=str(error),
+                       finished_utc=datetime.now(timezone.utc).isoformat())
+        history["failed_stage"] = history.pop("current_stage", None)
+        if "current_script" in history:
+            history["failed_script"] = history.pop("current_script")
+        if isinstance(error, subprocess.CalledProcessError):
+            history["exit_code"] = error.returncode
+        atomic_json(status_path, history)
+        raise
     history["status"] = "selected_stages_completed"
+    history.pop("current_stage", None)
+    history["finished_utc"] = datetime.now(timezone.utc).isoformat()
     atomic_json(status_path, history)
     print("Selected stages completed. Model accuracy is defined by the evaluation report, not by a software check.")
 
