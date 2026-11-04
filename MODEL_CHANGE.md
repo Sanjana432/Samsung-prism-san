@@ -36,7 +36,7 @@ No website files are present in this upstream repository; the earlier local PRIS
 
 ## Run on Colab
 
-1. [Open the model branch's notebook in Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/smolvlm2-model/colab_run_pipeline.ipynb).
+1. [Open the model branch's notebook in Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/smolvlm2-model/colab_run_pipeline.ipynb).
 2. Select a GPU runtime. The setup downloads this branch into
    `MyDrive/prism_ladder_smolvlm2`, separate from the Qwen experiment's `prism_ladder` folder.
 3. Run the setup cells. On GPUs below 20 GB the notebook sets
