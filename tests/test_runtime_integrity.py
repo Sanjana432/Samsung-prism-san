@@ -50,6 +50,15 @@ class PredictionResume(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no provenance"):
             self.prepare()
 
+    def test_tampered_manifest_identity_is_rejected(self):
+        self.prepare()
+        path = Path(str(self.path) + ".manifest.json")
+        saved = json.loads(path.read_text())
+        saved["identity"]["prompt"] = "tampered"
+        path.write_text(json.dumps(saved))
+        with self.assertRaisesRegex(ValueError, "corrupt provenance"):
+            self.prepare()
+
     def test_crash_tail_is_recoverable_and_newline_is_preserved(self):
         self.prepare()
         self.path.write_text(json.dumps(self.row) + '\n{"id":')
