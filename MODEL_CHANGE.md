@@ -1,6 +1,6 @@
 # Sanjana's PRISM model comparison: SmolVLM2
 
-> This is the improved `codex/smolvlm2-model-modified` branch. Start with
+> This is the improved `smolvlm2-model-modified` branch. Start with
 > [MODIFIED_PIPELINE.md](MODIFIED_PIPELINE.md) for the current run instructions,
 > shared pipeline fixes, verification evidence and remaining GPU checks.
 
@@ -39,7 +39,7 @@ This improved branch also changes integrity, checkpoint/resume safety, validatio
 
 ## Run on Colab
 
-1. [Open the model branch's notebook in Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/smolvlm2-model-modified/colab_run_pipeline.ipynb).
+1. [Open the model branch's notebook in Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/smolvlm2-model-modified/colab_run_pipeline.ipynb).
 2. Select a GPU runtime. The setup downloads this branch into
    `MyDrive/prism_ladder_smolvlm2_modified`, separate from the Qwen experiment's `prism_ladder` folder.
 3. Run the setup cells. On GPUs below 20 GB the notebook sets

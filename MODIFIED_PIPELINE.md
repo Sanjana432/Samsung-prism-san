@@ -7,10 +7,10 @@ to be measured on the same shared dataset.
 
 | Model | Improved code | Colab |
 |---|---|---|
-| SmolVLM2-2.2B | [Branch](https://github.com/Sanjana432/Samsung-prism-san/tree/codex/smolvlm2-model-modified) | [Run](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/smolvlm2-model-modified/colab_run_pipeline.ipynb) |
-| Gemma 4 E2B | [Branch](https://github.com/Sanjana432/Samsung-prism-san/tree/codex/gemma4-model-modified) | [Run](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/gemma4-model-modified/colab_run_pipeline.ipynb) |
-| InternVL 3.5 2B | [Branch](https://github.com/Sanjana432/Samsung-prism-san/tree/codex/internvl35-model-modified) | [Run](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/internvl35-model-modified/colab_run_pipeline.ipynb) |
-| Phi-3.5 Vision | [Branch](https://github.com/Sanjana432/Samsung-prism-san/tree/codex/phi35-model-modified) | [Run](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/phi35-model-modified/colab_run_pipeline.ipynb) |
+| SmolVLM2-2.2B | [Branch](https://github.com/Sanjana432/Samsung-prism-san/tree/smolvlm2-model-modified) | [Run](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/smolvlm2-model-modified/colab_run_pipeline.ipynb) |
+| Gemma 4 E2B | [Branch](https://github.com/Sanjana432/Samsung-prism-san/tree/gemma4-model-modified) | [Run](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/gemma4-model-modified/colab_run_pipeline.ipynb) |
+| InternVL 3.5 2B | [Branch](https://github.com/Sanjana432/Samsung-prism-san/tree/internvl35-model-modified) | [Run](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/internvl35-model-modified/colab_run_pipeline.ipynb) |
+| Phi-3.5 Vision | [Branch](https://github.com/Sanjana432/Samsung-prism-san/tree/phi35-model-modified) | [Run](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/phi35-model-modified/colab_run_pipeline.ipynb) |
 
 ## Run
 
