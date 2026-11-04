@@ -310,13 +310,13 @@ def write_report(results: dict, rows_by_model: dict, out_dir: str, title: str = 
                      f"{_fmt(row['gt_mean'])} | {_fmt(row['pred_mean'])} | {_fmt(row['MAE'])} | {row.get('n_compared', row['n'])}/{row['n']} | {_fmt(row['detection_rate'])} | {_fmt(row.get('detection_rate_end_to_end'))} |")
         prec = lad.get("attribution_precision", {})
         if prec:
-            L += ["", "Attribution precision (share of the predicted score drop that lands on the edited metric; "
-                      "1.0 = the model blames exactly the right metric):", "",
+            L += ["", "Attribution precision (positive predicted-drop mass on the metrics changed in each pair's ground truth, including its primary metric, divided by all positive predicted-drop mass). A bold font-family edit legitimately affects both Font Similarity and Semantic Emphasis. Missing comparisons are excluded and counted in coverage:", "",
                   "| Edit | Attribution precision | Largest wrongly-blamed metric |", "|---|---|---|"]
             for knob, pv in sorted(prec.items()):
-                d = {k: v for k, v in lad["leakage"][knob].items()}
-                prim = [r["primary_metric"] for r in lad["rows"] if r["artifact_type"] == knob][:1]
-                other = min((k for k in d if not prim or k != prim[0]), key=lambda k: d[k], default=None)
+                d = lad.get("unintended_drop", {}).get(knob, {})
+                other = max(d, key=d.get, default=None)
+                if other is not None and d[other] <= 1e-9:
+                    other = None
                 L.append(f"| {knob} | {_fmt(pv)} | {METRIC_NAMES.get(other, '-')} ({_fmt(d.get(other))}) |")
         L += ["", "| Edit | Just-noticeable level (>= 50% detected) | Mean Spearman(level, pred) | Flat Originals |", "|---|---|---|---|"]
         for knob, m in lad["monotonicity"].items():
