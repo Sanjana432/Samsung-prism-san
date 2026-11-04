@@ -121,8 +121,11 @@ class TrainingIntegrityTests(unittest.TestCase):
         self.assertFalse(training_complete(self.root, "a"))
         Model().save_pretrained(self.root / "best_adapter")
         Model().save_pretrained(self.root / "final_adapter")
+        atomic_json(self.root / "best_adapter" / "val_score.json", {"selection_score": .1, "run_fingerprint": "a"})
         self.assertTrue(training_complete(self.root, "a"))
         self.assertFalse(training_complete(self.root, "b"))
+        (self.root / "best_adapter" / "val_score.json").unlink()
+        self.assertFalse(training_complete(self.root, "a"))
 
     def collator(self, items):
         item = items[0]
@@ -160,6 +163,10 @@ class TrainingIntegrityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "both contain"):
             context_preflight([], [self.val], self.collator, cfg)
 
+    def test_context_preflight_checks_answer_output_budget(self):
+        with self.assertRaisesRegex(RuntimeError, "output would be truncated"):
+            context_preflight([dict(self.item, length=10)], [self.val], self.collator, self.cfg)
+
     def test_mode_and_both_cache_flags_restore_after_exception(self):
         model = Model()
         model.train()
@@ -193,6 +200,15 @@ class TrainingIntegrityTests(unittest.TestCase):
         self.assertFalse(model.config.use_cache)
         self.assertEqual(callback.best, float("inf"))
         self.assertEqual(json.loads((self.root / "val_generation_log.jsonl").read_text())["validation_failed"], "cuda_oom")
+
+    def test_callback_restores_state_on_unexpected_prediction_failure(self):
+        model = Model()
+        callback = ValidationGeneration(self.proc, self.cfg, [self.val], str(self.root))
+        with patch("prism.vlm.predict", side_effect=ValueError("bad prediction IDs")):
+            with self.assertRaisesRegex(ValueError, "bad prediction"):
+                callback.on_evaluate(None, SimpleNamespace(global_step=1, epoch=1.0), None, model=model)
+        self.assertTrue(model.training)
+        self.assertFalse(model.config.use_cache)
 
     def test_callback_keeps_original_selection_rule_and_ignores_incomplete_best(self):
         atomic_json(self.root / "best_adapter" / "val_score.json", {"selection_score": -10})
