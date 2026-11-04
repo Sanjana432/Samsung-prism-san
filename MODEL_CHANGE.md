@@ -54,9 +54,11 @@ The actual full-checkpoint T4 memory requirement and training throughput need a 
 
 ## Software verification
 
-All 13 integration tests passed locally with Transformers 4.56.2, PEFT 0.15.2, TRL 0.17.0,
+All 14 integration tests passed locally with Transformers 4.56.2, PEFT 0.15.2, TRL 0.17.0,
 CPU PyTorch 2.14.0 and torchvision 0.29.0. All Python source files and notebook JSON parse;
 the non-model configuration and prediction validation/retry/resume function match the team baseline.
+An actual generated 768x1024 Original/Release pair with its full twelve-line reasoning target
+uses 3,280 tokens with the default four-patch cap, within the unchanged 4,096-token limit.
 
 The integration tests use real checkpoint processor/tokenizer files and a tiny randomly initialized
 InternVL + Qwen3 architecture with the same LoRA settings for CPU forward/backward, finite gradient,

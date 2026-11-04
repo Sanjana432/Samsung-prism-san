@@ -171,6 +171,22 @@ class NativeInternVLTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "never truncate image tokens"):
             self.train.Collator(self.proc, cfg)(self.items[:1])
 
+    def test_full_rendered_document_and_twelve_line_target_fit_context(self):
+        from prism.ladder import make_ladder_sample
+        cfg = copy.deepcopy(self.cfg)
+        with tempfile.TemporaryDirectory(dir=ROOT, prefix="internvl_context_") as directory:
+            cfg["paths"]["images_dir"] = os.path.relpath(directory, ROOT)
+            record = make_ladder_sample(cfg, 0)
+            release = next(r for r in record["releases"] if r["release_id"] == "font_size_1")
+            self.assertEqual(record["image_size"], [768, 1024])
+            self.assertEqual(len(release["reasoning"].splitlines()), 12)
+            target = "<analysis>\n" + release["reasoning"] + "\n</analysis>\n" + json.dumps(release["scores"])
+            item = {"original_image_path": record["original_image_path"],
+                    "release_image_path": release["release_image_path"], "target": target}
+            enc = self.train.Collator(self.proc, cfg)([item])
+            self.assertLessEqual(enc["input_ids"].shape[1], cfg["model"]["max_seq_len"])
+            print(f"\n[native context] 768x1024 pair, 12-line target, sequence={enc['input_ids'].shape[1]} / {cfg['model']['max_seq_len']}")
+
     def test_generate_decodes_only_new_tokens_and_preserves_output_schema(self):
         model = MagicMock(device=torch.device("cpu"))
         def complete(**kwargs):
