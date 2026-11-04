@@ -222,6 +222,17 @@ class TrainingIntegrityTests(unittest.TestCase):
         self.assertEqual(record["run_fingerprint"], "run")
         self.assertTrue(adapter_complete(self.root / "best_adapter"))
 
+    def test_entirely_invalid_validation_cannot_create_a_best_adapter(self):
+        callback = ValidationGeneration(self.proc, self.cfg, [self.val], str(self.root), "run")
+        with patch("prism.vlm.predict", return_value=[{"id": self.val["id"], "pred": None}]):
+            callback.on_evaluate(None, SimpleNamespace(global_step=1, epoch=1.0), None, model=Model())
+        self.assertEqual(callback.best, float("inf"))
+        self.assertFalse((self.root / "best_adapter").exists())
+        record = json.loads((self.root / "val_generation_log.jsonl").read_text())
+        self.assertFalse(record["is_best"])
+        self.assertIsNone(record["val_gen_MAE"])
+        self.assertEqual(record["validation_failed"], "no_valid_predictions")
+
     def test_trainables_loss_and_gradients_fail_closed(self):
         model = Model()
         self.assertEqual(assert_lora_trainables(model), 1)
