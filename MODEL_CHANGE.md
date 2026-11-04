@@ -59,11 +59,13 @@ tiling is different from Qwen's pixel-budget processor; there is no added crop, 
 
 ## Verification
 
-Verified locally on 4 November 2026: **13/13 integration tests passed** with the actual public
+Verified locally on 4 November 2026: **14/14 integration tests passed** with the actual public
 processor files and `transformers==4.51.3`, `peft==0.15.2`, `trl==0.17.0` (CPU PyTorch 2.14.0).
 All 31 Python source files parse, the notebook JSON is valid, `git diff --check` passes and all
 non-model configuration sections match the original commit `1ae046558905c0bba20198ea077fec2cb0ffc627`.
 The unchanged repository CPU self-test passed, with the saved-dataset report test skipped as below.
+A real 768x1024 Original/Release pair with all 12 measured reasoning lines and JSON scores uses
+2,461 of the 4,096 allowed training tokens with the default native image settings.
 
 The integration suite uses the real public tokenizer, chat template and image processor, and a
 tiny randomly initialized instance of the actual SmolVLM architecture for CPU training checks.
