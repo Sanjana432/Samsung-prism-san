@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import tempfile
 
-from .prompts import PROMPTS, RETRY
+from .prompts import PROMPTS, RETRY, SYSTEM
 from .validation import validate_scores
 
 
@@ -50,7 +50,7 @@ def _weights_identity(path):
     return {p.name: file_hash(p) for p in files}
 
 
-def prediction_identity(model, cfg, items, prompt_id, max_new_tokens):
+def prediction_identity(model, cfg, items, prompt_id, max_new_tokens, processor=None):
     from .dataset import split_fingerprint
     versions = {}
     for name in ("torch", "transformers", "peft", "bitsandbytes"):
@@ -59,18 +59,23 @@ def prediction_identity(model, cfg, items, prompt_id, max_new_tokens):
         except importlib.metadata.PackageNotFoundError:
             versions[name] = None
     base = cfg["model"]["base"]
-    return {"schema_version": 1, "model": cfg["model"], "qlora": cfg["qlora"],
+    processor_info = {"chat_template": getattr(processor, "chat_template", None)}
+    for key in ("image_processor", "video_processor"):
+        component = getattr(processor, key, None)
+        if component is not None and hasattr(component, "to_dict"):
+            processor_info[key] = component.to_dict()
+    return {"schema_version": 1, "model": cfg["model"], "qlora": cfg["qlora"], "processor": processor_info,
             "model_revision": getattr(getattr(model, "config", None), "_commit_hash", None),
             "local_base": _weights_identity(base) if os.path.isdir(base) else None,
             "adapter": _weights_identity(cfg.get("_adapter_path")), "versions": versions,
             "pairs_fingerprint": split_fingerprint(items, root=cfg.get("_root")),
-            "prompt_id": prompt_id, "prompt": PROMPTS[prompt_id], "retry_prompt": RETRY,
+            "prompt_id": prompt_id, "system_prompt": SYSTEM, "prompt": PROMPTS[prompt_id], "retry_prompt": RETRY,
             "max_new_tokens": max_new_tokens, "retry_max_new_tokens": cfg["inference"]["retry_max_new_tokens"],
             "backend": file_hash(Path(__file__).with_name("vlm.py")),
             "validator": file_hash(Path(__file__).with_name("validation.py"))}
 
 
-def prepare_prediction_run(model, cfg, items, prompt_id, max_new_tokens, out_path):
+def prepare_prediction_run(model, cfg, items, prompt_id, max_new_tokens, out_path, processor=None):
     expected = {item["id"]: item for item in items}
     if len(expected) != len(items):
         raise ValueError("duplicate pair IDs in inference inputs")
@@ -78,7 +83,7 @@ def prepare_prediction_run(model, cfg, items, prompt_id, max_new_tokens, out_pat
         return []
     path = Path(out_path)
     sidecar = Path(str(path) + ".manifest.json")
-    identity = prediction_identity(model, cfg, items, prompt_id, max_new_tokens)
+    identity = prediction_identity(model, cfg, items, prompt_id, max_new_tokens, processor)
     fingerprint = digest(identity)
     if sidecar.exists():
         saved = json.loads(sidecar.read_text(encoding="utf-8"))

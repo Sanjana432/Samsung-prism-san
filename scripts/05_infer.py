@@ -48,6 +48,8 @@ def main():
     ap.add_argument("--prompt", default=TRAIN_PROMPT)
     a = ap.parse_args()
     cfg = load_config(a.config)
+    from prism.dataset import assert_dataset_ready
+    assert_dataset_ready(cfg)
     from prism.vlm import load_model, load_processor, predict
     items = read_jsonl(P(cfg, "pairs_dir", f"{a.split}.jsonl"))
     if cfg["inference"]["test_limit"] and a.split == "test":
