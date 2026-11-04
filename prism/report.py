@@ -284,8 +284,8 @@ def write_report(results: dict, rows_by_model: dict, out_dir: str, title: str = 
             L.append(f"| {CATEGORY_NAMES.get(c, 'Overall')} | {_fmt(m.get('MAE'))} | {_fmt(m.get('RMSE'))} | "
                      f"{_fmt(m.get('PLCC'))} | {_fmt(m.get('SROCC'))} |")
         L += ["", f"### Diagnostic audit - {n}", "",
-              f"{len(r['top_errors'])} metric predictions have |error| > 0.30 "
-              f"({len(r['top_errors']) / max(1, len(r['error_rows'])):.1%} of all).", ""]
+              f"{len(r['top_errors'])} metric predictions have |error| > {r.get('diagnostic_top_error_threshold', 0.30):g} "
+              f"({len(r['top_errors']) / max(1, len(r['error_rows'])):.1%} of valid metric predictions).", ""]
         if r["failure_patterns"]:
             L += ["| Metric | Template | Count | Direction |", "|---|---|---|---|"]
             for p in r["failure_patterns"][:10]:
@@ -343,9 +343,9 @@ def write_report(results: dict, rows_by_model: dict, out_dir: str, title: str = 
     L += ["", "## Files", "", "- `evaluation_metrics.xlsx` - every table above plus top errors and per-sample rankings",
           "- `release_rankings_<model>.csv` - per sample: ground-truth vs predicted ranking of the 24 edited releases and best release",
           "- `figures/` - MAE per metric, GT-vs-prediction scatter per metric, quality-band confusion"]
-    with open(os.path.join(out_dir, "evaluation_report.md"), "w") as f:
+    with open(os.path.join(out_dir, "evaluation_report.md"), "w", encoding="utf-8") as f:
         f.write("\n".join(L) + "\n")
-    with open(os.path.join(out_dir, "evaluation_results.json"), "w") as f:
+    with open(os.path.join(out_dir, "evaluation_results.json"), "w", encoding="utf-8") as f:
         json.dump(finite_json({n: {k: v for k, v in r.items() if k not in ("error_rows",)} for n, r in results.items()}),
                   f, indent=1, allow_nan=False)
     return os.path.join(out_dir, "evaluation_report.md")
