@@ -40,13 +40,15 @@ def atomic_json(path, value):
             os.unlink(temporary)
 
 
-def _weights_identity(path):
+def weights_identity(path):
     if not path:
         return None
     folder = Path(path)
     if not folder.is_dir():
         raise ValueError(f"model/adapter directory does not exist: {path}")
-    files = sorted(p for p in folder.iterdir() if p.suffix in (".json", ".safetensors", ".bin"))
+    # Local custom-model code/tokenizer files can change inference just as weights can.
+    extensions = {".json", ".safetensors", ".bin", ".py", ".model", ".txt", ".jinja", ".tiktoken"}
+    files = sorted(p for p in folder.iterdir() if p.is_file() and p.suffix in extensions)
     return {p.name: file_hash(p) for p in files}
 
 
@@ -59,15 +61,28 @@ def prediction_identity(model, cfg, items, prompt_id, max_new_tokens, processor=
         except importlib.metadata.PackageNotFoundError:
             versions[name] = None
     base = cfg["model"]["base"]
-    processor_info = {"chat_template": getattr(processor, "chat_template", None)}
+    tokenizer = getattr(processor, "tokenizer", None)
+    processor_info = {"class": type(processor).__name__ if processor is not None else None,
+                      "chat_template": getattr(processor, "chat_template", None)
+                      or getattr(tokenizer, "chat_template", None)}
+    if tokenizer is not None:
+        processor_info["tokenizer"] = {
+            "class": type(tokenizer).__name__,
+            "vocabulary": digest(tokenizer.get_vocab()) if hasattr(tokenizer, "get_vocab") else None,
+            "special_tokens": getattr(tokenizer, "special_tokens_map", None),
+            "chat_template": getattr(tokenizer, "chat_template", None),
+            "bos_token_id": getattr(tokenizer, "bos_token_id", None),
+            "eos_token_id": getattr(tokenizer, "eos_token_id", None),
+            "pad_token_id": getattr(tokenizer, "pad_token_id", None),
+        }
     for key in ("image_processor", "video_processor"):
         component = getattr(processor, key, None)
         if component is not None and hasattr(component, "to_dict"):
             processor_info[key] = component.to_dict()
     return {"schema_version": 1, "model": cfg["model"], "qlora": cfg["qlora"], "processor": processor_info,
             "model_revision": getattr(getattr(model, "config", None), "_commit_hash", None),
-            "local_base": _weights_identity(base) if os.path.isdir(base) else None,
-            "adapter": _weights_identity(cfg.get("_adapter_path")), "versions": versions,
+            "local_base": weights_identity(base) if os.path.isdir(base) else None,
+            "adapter": weights_identity(cfg.get("_adapter_path")), "versions": versions,
             "pairs_fingerprint": split_fingerprint(items, root=cfg.get("_root")),
             "prompt_id": prompt_id, "system_prompt": SYSTEM, "prompt": PROMPTS[prompt_id], "retry_prompt": RETRY,
             "max_new_tokens": max_new_tokens, "retry_max_new_tokens": cfg["inference"]["retry_max_new_tokens"],
@@ -100,28 +115,44 @@ def prepare_prediction_run(model, cfg, items, prompt_id, max_new_tokens, out_pat
     rows, seen = [], set()
     if not path.exists():
         return rows
-    data = path.read_bytes()
-    consumed = 0
-    for index, line in enumerate(data.splitlines(keepends=True)):
-        try:
-            row = json.loads(line)
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            if consumed + len(line) == len(data) and not line.endswith(b"\n"):
-                # Only an interrupted final append is recoverable; never hide corruption in the middle.
-                with open(path, "r+b") as stream:
-                    stream.truncate(consumed)
-                break
-            raise ValueError(f"corrupt prediction JSONL at line {index + 1}: {path}")
-        pair_id = row.get("id")
-        if pair_id not in expected or pair_id in seen:
-            raise ValueError(f"unknown/duplicate prediction ID: {pair_id}")
-        if row.get("pred") is not None and validate_scores(row["pred"])[0] is None:
-            raise ValueError(f"invalid saved scores for {pair_id}")
-        if any(row.get(k) != expected[pair_id].get(k) for k in ("sample_id", "release_id")):
-            raise ValueError(f"prediction identity mismatch for {pair_id}")
-        seen.add(pair_id)
-        rows.append(row)
-        consumed += len(line)
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON key in saved prediction: {key}")
+            result[key] = value
+        return result
+
+    size, consumed, truncate_at = path.stat().st_size, 0, None
+    # Stream existing outputs: reading/splitting the whole JSONL duplicates large raw answers
+    # in host RAM, which competes with offloaded model weights on a free Colab runtime.
+    with open(path, "rb") as stream:
+        for index, line in enumerate(stream):
+            try:
+                row = json.loads(line, object_pairs_hook=unique_object)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                if consumed + len(line) == size and not line.endswith(b"\n"):
+                    # Only an interrupted final append is recoverable.
+                    truncate_at = consumed
+                    break
+                raise ValueError(f"corrupt prediction JSONL at line {index + 1}: {path}")
+            if not isinstance(row, dict) or "pred" not in row:
+                raise ValueError(f"saved prediction at line {index + 1} must be an object with a pred field")
+            pair_id = row.get("id")
+            if not isinstance(pair_id, str) or pair_id not in expected or pair_id in seen:
+                raise ValueError(f"unknown/duplicate prediction ID: {pair_id}")
+            if row.get("pred") is not None and validate_scores(row["pred"])[0] is None:
+                raise ValueError(f"invalid saved scores for {pair_id}")
+            if any(row.get(k) != expected[pair_id].get(k) for k in ("sample_id", "release_id")):
+                raise ValueError(f"prediction identity mismatch for {pair_id}")
+            seen.add(pair_id)
+            rows.append(row)
+            consumed += len(line)
+    if truncate_at is not None:
+        with open(path, "r+b") as stream:
+            stream.truncate(truncate_at)
+            stream.flush()
+            os.fsync(stream.fileno())
     # A complete final JSON object without a newline is valid, but the next append needs a separator.
     if path.stat().st_size:
         with open(path, "rb+") as stream:
@@ -129,4 +160,6 @@ def prepare_prediction_run(model, cfg, items, prompt_id, max_new_tokens, out_pat
             if stream.read(1) != b"\n":
                 stream.seek(0, os.SEEK_END)
                 stream.write(b"\n")
+                stream.flush()
+                os.fsync(stream.fileno())
     return rows
