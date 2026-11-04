@@ -48,13 +48,15 @@ def main():
         items.append({"id": f"pair_{i:05d}", "sample_id": f"pair_{i:05d}", "release_id": "R",
                       "original_image_path": o, "release_image_path": r})
     from prism.vlm import load_model, load_processor, predict
-    adapter = abspath(a.adapter) if a.adapter and a.adapter.lower() != "none" and os.path.exists(abspath(a.adapter)) else None
+    adapter = abspath(a.adapter) if a.adapter and a.adapter.lower() != "none" else None
+    if adapter and not os.path.isfile(os.path.join(adapter, "adapter_config.json")):
+        sys.exit("Requested trained adapter is missing. Train first, supply --adapter PATH, or use --adapter none for an explicit baseline.")
     model, proc = load_model(cfg, adapter), load_processor(cfg)
     rows = predict(model, proc, cfg, items, TRAIN_PROMPT)
     thr = a.threshold if a.threshold is not None else cfg["evaluation"].get("gate_threshold", 0.95)
     out = []
     for it, row in zip(items, rows):
-        v = verdict(row["pred"], row.get("raw"), thr, cfg["scoring"]["category_weights"])
+        v = verdict(row["pred"], row.get("effective_raw", row.get("raw")), thr, cfg["scoring"]["category_weights"])
         v.update({"original": it["original_image_path"], "release": it["release_image_path"]})
         out.append(v)
         print(f"\n{it['release_image_path']}: {v['decision']}  (overall {v.get('overall', float('nan')):.3f})")
