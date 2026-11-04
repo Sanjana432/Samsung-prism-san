@@ -136,9 +136,10 @@ def evaluate(records: list, category_weights=None, top_error_threshold=0.30, gat
             e = r["pred"][k] - r["gt"][k]
             err_rows.append({"sample_id": r["sample_id"], "release_id": r["release_id"], "template": r["template"],
                              "metric": k, "category": METRIC_CATEGORY[k], "gt": r["gt"][k], "pred": r["pred"][k],
-                             "error": round(e, 4), "abs_error": round(abs(e), 4)})
+                             "error": e, "abs_error": abs(e)})
     top = sorted([e for e in err_rows if e["abs_error"] > top_error_threshold], key=lambda e: -e["abs_error"])
     res["top_errors"] = top
+    res["diagnostic_top_error_threshold"] = top_error_threshold
     buckets = {"untouched (gt>=0.98)": (0.98, 1.01), "minute (0.90-0.98)": (0.90, 0.98),
                "moderate (0.60-0.90)": (0.60, 0.90), "strong (<0.60)": (-0.01, 0.60)}
     sev_table = {}

@@ -97,6 +97,7 @@ def disable_training_cache(model):
 
 def training_identity(cfg, processor, train, val):
     """Hash actual inputs, targets, processor vocabulary/settings and the training protocol."""
+    from .runtime import weights_identity
     image_hashes = {}
     def records(items):
         result = []
@@ -124,9 +125,10 @@ def training_identity(cfg, processor, train, val):
             versions[name] = None
     root = Path(__file__).resolve().parents[1]
     source_hashes = {name: _file_hash(root / name) for name in (
-        "prism/training.py", "prism/vlm.py", "prism/prompts.py", "prism/validation.py", "scripts/04_train_qlora.py")
+        "prism/training.py", "prism/runtime.py", "prism/vlm.py", "prism/prompts.py", "prism/validation.py", "scripts/04_train_qlora.py")
         if (root / name).is_file()}
     payload = {"schema": 2, "kind": "prism-training", "model": cfg["model"], "qlora": cfg["qlora"],
+               "local_base": weights_identity(cfg["model"]["base"]) if os.path.isdir(cfg["model"]["base"]) else None,
                "train": cfg["train"], "seed": cfg["project_seed"], "inference": cfg["inference"],
                "processor_class": type(processor).__name__, "processor": proc_config,
                "chat_template": getattr(processor, "chat_template", None) or getattr(tokenizer, "chat_template", None),
@@ -140,11 +142,21 @@ def training_identity(cfg, processor, train, val):
 
 def ensure_training_run(out_dir, identity):
     """Fail closed on stale/unidentified training artifacts, without overwriting user work."""
+    if (not isinstance(identity, dict) or not isinstance(identity.get("payload"), dict)
+            or _digest(identity["payload"]) != identity.get("fingerprint")):
+        raise ValueError("Invalid training identity: payload fingerprint mismatch")
     root = Path(out_dir)
     root.mkdir(parents=True, exist_ok=True)
     manifest = root / "training_manifest.json"
     if manifest.exists():
-        previous = json.loads(manifest.read_text(encoding="utf-8"))
+        try:
+            previous = json.loads(manifest.read_text(encoding="utf-8"))
+            if (not isinstance(previous, dict) or not isinstance(previous.get("payload"), dict)
+                    or _digest(previous["payload"]) != previous.get("fingerprint")):
+                raise ValueError("payload fingerprint mismatch")
+        except (ValueError, OSError) as error:
+            raise RuntimeError("Training manifest is corrupt. Existing files are preserved; "
+                               "restore an intact manifest or choose a fresh outputs directory.") from error
         if previous.get("fingerprint") != identity["fingerprint"]:
             raise RuntimeError("Training inputs/configuration changed. Existing checkpoints are preserved; "
                                "choose a fresh paths.outputs_dir instead of resuming this run.")
@@ -287,9 +299,20 @@ def assert_finite_training(model, loss=None):
         raise RuntimeError("Non-finite training loss; stop before using this adapter")
     gradients = [param.grad for name, param in model.named_parameters()
                  if param.requires_grad and "lora_" in name and param.grad is not None]
-    if not gradients or not all(bool(torch.isfinite(grad).all()) for grad in gradients):
+    if not gradients:
         raise RuntimeError("Missing or non-finite LoRA gradients; optimizer update rejected")
-    if not any(bool(torch.count_nonzero(grad)) for grad in gradients):
+    # Reading each scalar in Python forces a separate CUDA synchronisation per LoRA
+    # tensor. Reduce on-device first, then transfer two status flags once per device.
+    by_device = {}
+    for grad in gradients:
+        by_device.setdefault(grad.device, []).append(torch.stack((torch.isfinite(grad).all(), (grad != 0).any())))
+    statuses = []
+    for flags in by_device.values():
+        flags = torch.stack(flags)
+        statuses.append(torch.stack((flags[:, 0].all(), flags[:, 1].any())).tolist())
+    if not all(finite for finite, _ in statuses):
+        raise RuntimeError("Missing or non-finite LoRA gradients; optimizer update rejected")
+    if not any(nonzero for _, nonzero in statuses):
         raise RuntimeError("All LoRA gradients are zero; check answer masks and model preparation")
 
 

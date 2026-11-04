@@ -133,6 +133,14 @@ class LoaderIntegrityTests(unittest.TestCase):
 
 
 class AccuracyIntegrityTests(unittest.TestCase):
+    def test_diagnostic_errors_retain_minute_precision_before_thresholding(self):
+        record = row(gt=.8, pred=.80004)
+        result = evaluate([record], top_error_threshold=.00003)
+        self.assertEqual(len(result["top_errors"]), len(METRIC_KEYS))
+        self.assertAlmostEqual(result["error_rows"][0]["abs_error"], .00004)
+        self.assertAlmostEqual(result["error_by_severity"][METRIC_KEYS[0]]["moderate (0.60-0.90)"]["MAE"], .00004)
+        self.assertEqual(result["diagnostic_top_error_threshold"], .00003)
+
     def test_nonfinite_bool_string_and_extra_metric_scores_are_invalid(self):
         for value in (True, False, "0.8", float("nan"), float("inf"), -.1, 1.1):
             bad = row()
@@ -204,7 +212,7 @@ class AccuracyIntegrityTests(unittest.TestCase):
     def test_all_invalid_reports_are_writable_and_strict_json(self):
         records = [row("a", pred=None, missing_prediction=True), row("b", pred=None),
                    dict(row("c"), pred={**scores(.8), METRIC_KEYS[0]: "invalid"})]
-        result = evaluate(records)
+        result = evaluate(records, top_error_threshold=.17)
         with tempfile.TemporaryDirectory() as directory:
             write_report({"bad_a": result, "bad_b": result}, {"bad_a": records, "bad_b": records}, directory)
             def invalid_constant(value):
@@ -214,6 +222,7 @@ class AccuracyIntegrityTests(unittest.TestCase):
             self.assertEqual(exported["bad_a"]["coverage"]["valid_rate"], 0)
             self.assertTrue((Path(directory) / "evaluation_metrics.xlsx").is_file())
             self.assertIn("No paired MAE comparison", (Path(directory) / "evaluation_report.md").read_text())
+            self.assertIn("|error| > 0.17", (Path(directory) / "evaluation_report.md").read_text())
 
 
 if __name__ == "__main__":

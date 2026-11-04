@@ -19,6 +19,9 @@ notebook clones its own modified branch into `MyDrive/prism_ladder_<model>_modif
 writes a separate, ignored `configs/colab_runtime.yaml` so GPU settings do not dirty the
 tracked configuration or obstruct later updates. Every stage is a checked subprocess:
 an error stops the notebook instead of being followed by a misleading success report.
+Open a fresh copy from the updated notebook link when returning to an existing Drive
+workspace. Its setup explicitly fetches the selected branch, migrates a matching older
+local branch name and updates it by fast-forward; existing data and local edits are preserved.
 
 Use the team's identical `data/` folder, sample IDs, labels and split membership for every
 model. Move one copy between workspaces if Drive space is limited; keep model outputs in
@@ -41,6 +44,8 @@ its own process so GPU allocations are released between stages.
 To supply a separate configuration, add `--config configs/colab_runtime.yaml`. GPU smoke,
 generation, split validation, self-tests, training and evaluation accept that same option.
 The checked runner records progress/failure in `reports/pipeline_status.json`.
+It also records pre-launch validation errors and the failed stage/script, with completion
+timestamps, so an interrupted or rejected run cannot remain labelled as running.
 
 ## Changes beyond the model swap
 
@@ -61,11 +66,14 @@ changed data. Empty splits require an explicit CPU-pilot option, not a silent be
 budget before model weights are loaded. Full answer tokens and the generation reserve
 must fit, with no silent image-token truncation. Training manifests bind model/revision,
 processor, source code, configuration, image content, targets and library versions.
+Local base weights and custom model files are hashed too; altered manifest payloads are rejected.
 Only complete compatible optimizer/RNG checkpoints are resumed. The best adapter is
 selected on validation generation MAE plus invalid-output penalty; invalid validation
 cannot manufacture a successful best checkpoint. Earlier adapters are preserved when
 replacing an adapter. Validation restores model/cache state even after errors. LoRA-only
 trainables and finite nonzero gradients are checked before updates.
+Gradient status is reduced on each device before a small status transfer, avoiding a separate
+GPU synchronisation for every adapter tensor.
 
 **Prediction:** output manifests bind the exact images, model/revision, adapter weights,
 processor, system/rubric prompts, decoding budget, code and library versions. Incompatible
@@ -73,6 +81,11 @@ or unidentified legacy predictions are not silently mixed into a new run. A cras
 last JSONL line can be recovered; corruption in complete records fails explicitly. Saved
 scores reject booleans, numeric strings, duplicate keys and non-finite values. The effective
 retry text stays attached to its final scores for honest explanation evaluation.
+Resume reads JSONL incrementally and rejects duplicate JSON object keys or malformed records.
+Tokenizer vocabulary, templates and special-token IDs are part of prediction identity.
+Native generation checks prompt plus output tokens against the configured context budget
+before GPU transfer. On a batch memory failure, the failed frame is released and inference
+retries with a smaller batch; the smaller batch is retained without reducing image detail.
 
 **Evaluation:** missing outputs remain in the full ground-truth denominator. Invalid,
 duplicate and unknown records are handled explicitly. Rankings are tie-aware and report
@@ -84,6 +97,9 @@ Legitimate multi-metric effects, such as a bold font-family edit, receive attrib
 Conditional results, end-to-end coverage and common-valid-subset comparisons are identified
 separately. All-invalid reports still export Excel/figures, with strict JSON `null` for
 undefined values rather than non-standard `NaN`. Reports include hash-linked provenance.
+Prompt selection uses expected-pair coverage and stops before test inference when every
+validation prompt is invalid. Undefined prompt MAE is `null`/`n/a`. Minute diagnostic errors
+retain their full precision for threshold comparisons; rounding happens only for display.
 
 **Adaptive data engine:** new training examples can be targeted only from validation-set
 results whose report and dataset fingerprints match. Test/unknown/stale reports are rejected.
@@ -99,6 +115,11 @@ ranking too. Record resolution/tiling/crops and hardware because native processo
 Training on synthetic formula labels does not establish agreement with human reviewers or
 real-world scans; those require a separately held-out annotated evaluation set.
 
+The existing sensitivity `jnd` field is a direction-only summary: the first level at which
+at least half of expected releases receive a lower score than their unchanged control.
+Random score variation can approach that threshold. Read it with control false alarms,
+MAE and severity monotonicity; it is not a calibrated human perceptual threshold.
+
 The model-specific `MODEL_CHANGE.md` documents the architecture and dependency choices.
 Gemma E2B has about 5.1B total parameters, so its effective-size name is not a GPU-memory
 promise. The GPU smoke test remains necessary on the actual Colab allocation for every model.
@@ -110,12 +131,12 @@ processor-only snapshot:
 
 | Branch model | Tests passed | Skipped |
 |---|---:|---:|
-| SmolVLM2 | 71 | 0 |
-| Gemma 4 E2B | 72 | 0 |
-| InternVL 3.5 | 71 | 0 |
-| Phi-3.5 Vision | 71 | 0 |
+| SmolVLM2 | 88 | 0 |
+| Gemma 4 E2B | 89 | 0 |
+| InternVL 3.5 | 88 | 0 |
+| Phi-3.5 Vision | 88 | 0 |
 
-The 285 checks across the four branches cover data integrity, resume identity, invalid
+The 353 checks across the four branches cover data integrity, resume identity, invalid
 outputs, evaluation coverage/ranking, checkpoint selection and each native model integration.
 Tiny randomly initialized real architectures exercise forward/backward and adapter reload;
 the Gemma suite also runs an actual one-step TRL trainer check. These do not measure the
@@ -126,7 +147,9 @@ plus 72 edited releases, 78 images). All 900 metric labels were independently re
 with zero mismatches; all 75 locality checks passed, all controls were pixel-identical and
 all 72 edits changed pixels. Dataset validation, split publication, all 23 renderer-template
 identity checks and mock-predictor Excel/figure reporting completed successfully. All
-41 Python files and 10 notebook cells in each branch passed syntax/structure checks.
+43 Python files and 10 notebook cells in each branch passed syntax/structure checks.
+The setup migration was also checked with real temporary Git repositories: fresh cloning,
+updating an older local branch while preserving edits, and refusing a different model's folder.
 An additional UTF-8 metadata round-trip passed in each branch with Python UTF-8 mode disabled.
 Generated pilot data and mock reports are ignored, not distributed as model results.
 

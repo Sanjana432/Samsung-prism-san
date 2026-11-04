@@ -81,6 +81,52 @@ class LocalCheckpointTests(unittest.TestCase):
 
 
 class ValidationContractTests(unittest.TestCase):
+    def test_oom_fallback_releases_failed_frame_and_remembers_smaller_batch(self):
+        import weakref
+        items = [{"id": f"s{i}_r", "sample_id": f"s{i}", "release_id": "R"} for i in range(4)]
+        cfg = load_config()
+        calls, allocations = [], []
+        class Allocation:
+            pass
+        def generate_batch(model, proc, cfg, batch, prompt, budget):
+            calls.append(len(batch))
+            if len(batch) > 2:
+                allocation = Allocation()
+                allocations.append(weakref.ref(allocation))
+                raise torch.cuda.OutOfMemoryError("simulated batch memory exhaustion")
+            self.assertTrue(all(ref() is None for ref in allocations))
+            return [ANSWER] * len(batch)
+        def clear_cache():
+            self.assertTrue(all(ref() is None for ref in allocations),
+                            "the failed generation traceback must release its tensors before recovery")
+        with patch("prism.vlm.generate", new=generate_batch), patch("prism.vlm.torch.cuda.empty_cache", side_effect=clear_cache) as clear:
+            rows = predict(None, None, cfg, items, "P4", batch_size=4)
+        self.assertEqual(calls, [4, 2, 2])
+        self.assertEqual(clear.call_count, 1)
+        self.assertEqual([row["id"] for row in rows], [item["id"] for item in items])
+        self.assertTrue(all(row["pred"] == SCORES for row in rows))
+
+    def test_single_pair_oom_is_not_retried_without_reducing_memory(self):
+        item = {"id": "a", "sample_id": "a", "release_id": "R"}
+        with patch("prism.vlm.generate", side_effect=torch.cuda.OutOfMemoryError("single pair")) as generator:
+            with self.assertRaises(torch.cuda.OutOfMemoryError):
+                predict(None, None, load_config(), [item], "P4", batch_size=1)
+        self.assertEqual(generator.call_count, 1)
+
+    def test_invalid_generation_controls_fail_before_processing(self):
+        cfg = load_config()
+        item = {"id": "a", "sample_id": "a", "release_id": "R"}
+        for key in ("batch_size", "max_new_tokens", "log_every"):
+            for value in (0, -1, True, 1.5):
+                with self.subTest(key=key, value=value), patch("prism.vlm.generate") as generator:
+                    with self.assertRaisesRegex(ValueError, "positive integer"):
+                        predict(None, None, cfg, [item], "P4", **{key: value})
+                    generator.assert_not_called()
+        with patch("prism.vlm.encode_pairs") as encoder:
+            with self.assertRaisesRegex(ValueError, "positive integer"):
+                generate(None, None, cfg, [item], "compare", 0)
+            encoder.assert_not_called()
+
     def test_existing_retry_and_resume_contract(self):
         items = [{"id": f"s{i}_r", "sample_id": f"s{i}", "release_id": "R"} for i in range(2)]
         cfg = load_config()
@@ -200,6 +246,26 @@ class NativeGemma4Tests(unittest.TestCase):
             resumed = predict(model, self.proc, self.cfg, self.items, "P4", out_path=out, batch_size=2)
             generator.assert_not_called()
         self.assertEqual(original, resumed)
+
+    def test_generation_context_budget_checked_before_device_transfer(self):
+        encoded = encode_pairs(self.proc, self.items, PROMPTS["P4"])
+        prompt_tokens = encoded["input_ids"].shape[1]
+        cfg = copy.deepcopy(self.cfg)
+        cfg["model"]["max_seq_len"] = prompt_tokens + 32 - 1
+        model = MagicMock(device=torch.device("cpu"))
+        with patch("prism.vlm.encode_pairs", return_value=encoded), patch.object(encoded, "to", wraps=encoded.to) as transfer:
+            with self.assertRaisesRegex(RuntimeError, "never truncate image tokens"):
+                generate(model, self.proc, cfg, self.items, PROMPTS["P4"], 32)
+            transfer.assert_not_called()
+            model.generate.assert_not_called()
+        cfg["model"]["max_seq_len"] += 1
+        def complete(**kwargs):
+            ids = kwargs["input_ids"]
+            return torch.cat([ids, torch.full((len(self.items), 1), self.proc.tokenizer.eos_token_id)], dim=1)
+        model.generate.side_effect = complete
+        with patch("prism.vlm.compute_dtype", return_value=torch.float32):
+            generate(model, self.proc, cfg, self.items, PROMPTS["P4"], 32)
+        self.assertEqual(model.generate.call_args.kwargs["input_ids"].shape[1], prompt_tokens)
 
     def test_generate_decodes_only_new_tokens_and_preserves_output_schema(self):
         model = MagicMock(device=torch.device("cpu"))
