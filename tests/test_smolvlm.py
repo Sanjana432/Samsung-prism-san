@@ -91,7 +91,7 @@ class ValidationContractTests(unittest.TestCase):
                 self.assertEqual(gen.call_count, 2)
             self.assertEqual([r["retried"] for r in rows], [False, True])
             self.assertTrue(all(r["pred"] == SCORES for r in rows))
-            self.assertEqual(set(rows[0]), {"id", "sample_id", "release_id", "prompt_id", "pred", "raw", "retried", "errors"})
+            self.assertEqual(set(rows[0]), {"id", "sample_id", "release_id", "prompt_id", "pred", "raw", "effective_raw", "retried", "errors"})
             with patch("prism.vlm.generate") as gen:
                 resumed = predict(None, None, cfg, items, "P4", out_path=out)
                 gen.assert_not_called()

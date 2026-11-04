@@ -50,6 +50,7 @@ model:
   # Independent SmolLM2 + SigLIP model family; native Transformers support, Apache-2.0.
   # 4-bit NF4 + fp16/SDPA on a free Colab T4. Run gpu_smoke_test.py before long jobs.
   base: HuggingFaceTB/SmolVLM2-2.2B-Instruct
+  revision: 482adb537c021c86670beed01cd58990d01e72e4  # verified processor/weights snapshot for reproducible comparisons
   local_dir: models/SmolVLM2-2.2B-Instruct   # if this folder exists it is used instead of downloading `base`
                                 # (relative to the project root, or an absolute path; works offline)
   image_longest_edge: 1152      # SmolVLM native 384 px tiles + overview; Colab uses 768 on <20 GB GPUs
