@@ -1,5 +1,9 @@
 # Sanjana's PRISM comparison: InternVL3.5-2B
 
+> This is the improved `codex/internvl35-model-modified` branch. Start with
+> [MODIFIED_PIPELINE.md](MODIFIED_PIPELINE.md) for the current run instructions,
+> shared pipeline fixes, verification evidence and remaining GPU checks.
+
 This branch uses [OpenGVLab/InternVL3_5-2B-HF](https://huggingface.co/OpenGVLab/InternVL3_5-2B-HF),
 with the native Transformers InternVL implementation and Apache-2.0 weights.
 
@@ -17,7 +21,7 @@ These capabilities motivate the choice; they do not establish minute-change accu
 
 ## Exact scope
 
-Only the model integration, model dependencies and model run instructions change:
+The model-specific integration includes:
 - Native `InternVLForConditionalGeneration` and `InternVLProcessor`.
 - `transformers==4.56.2`; the existing `trl==0.17.0` and `peft==0.15.2` are retained.
 - Native 448 px tiles, capped by `model.max_image_patches: 4`; 256 visual tokens per tile.
@@ -26,21 +30,19 @@ Only the model integration, model dependencies and model run instructions change
   and right padding for supervised training, without image-token truncation.
 - A separate model checkpoint directory and Drive workspace.
 
-The templates, 24-release generation ladder, labels, P1-P4 prompt wording, target text, splits,
-QLoRA r/alpha/dropout/all-linear targets, optimizer, training schedule, validation checkpoint
-selection, output gate/retry/resume logic, 12 metrics, score engine and evaluation remain unchanged.
-All non-model configuration sections match the original team configuration.
-No website files exist in this upstream repository; the earlier PRISM site is unchanged.
+The renderer, templates, 24-release design, metric definitions, P1-P4 wording and QLoRA hyperparameters retain the team experiment.
+This improved branch also adds shared data, checkpoint, prediction and evaluation fixes in
+[MODIFIED_PIPELINE.md](MODIFIED_PIPELINE.md).
 
 ## Open and run
 
-[Open this branch's Colab notebook](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/internvl35-model/colab_run_pipeline.ipynb).
+[Open this branch's Colab notebook](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/internvl35-model-modified/colab_run_pipeline.ipynb).
 
-1. Select a GPU runtime. The notebook clones branch `codex/internvl35-model` into
-   `MyDrive/prism_ladder_internvl35`.
+1. Select a GPU runtime. The notebook clones branch `codex/internvl35-model-modified` into
+   `MyDrive/prism_ladder_internvl35_modified`.
 2. Supply the exact same team `data/` directory (originals, releases, metadata and split files)
    used by the other model branches. Do not copy another model's adapters or predictions.
-   The unchanged generator is available if the shared dataset has not yet been created.
+   The generator is available if the shared dataset has not yet been created.
 3. Install requirements. On GPUs below 20 GB, the notebook uses four native patches/image and
    inference batch size 2. Run the GPU smoke test before long stages.
 4. Run the existing prompt-study/baseline, QLoRA training, inference and evaluation cells.
@@ -52,11 +54,14 @@ No website files exist in this upstream repository; the earlier PRISM site is un
 Weights use 4-bit NF4/double quantization; T4 uses fp16 and SDPA without FlashAttention.
 The actual full-checkpoint T4 memory requirement and training throughput need a GPU run.
 
-## Software verification
+## Initial model integration verification
+
+The results below describe the original model integration. For the expanded modified-branch
+regressions and CPU pilot, see [MODIFIED_PIPELINE.md](MODIFIED_PIPELINE.md).
 
 All 14 integration tests passed locally with Transformers 4.56.2, PEFT 0.15.2, TRL 0.17.0,
 CPU PyTorch 2.14.0 and torchvision 0.29.0. All Python source files and notebook JSON parse;
-the non-model configuration and prediction validation/retry/resume function match the team baseline.
+the non-model configuration matched the team baseline. The improved shared prediction checks are documented in the current guide.
 An actual generated 768x1024 Original/Release pair with its full twelve-line reasoning target
 uses 3,280 tokens with the default four-patch cap, within the unchanged 4,096-token limit.
 
@@ -75,7 +80,8 @@ They are explicitly skipped without it. To download these small files without mo
 import os
 from huggingface_hub import snapshot_download
 os.environ["INTERNVL_PROCESSOR_DIR"] = snapshot_download(
-    "OpenGVLab/InternVL3_5-2B-HF", allow_patterns=["*.json", "*.txt", "*.jinja"])
+    "OpenGVLab/InternVL3_5-2B-HF", revision="3f301ffcf3dcbb47893afae6650ea3e78d96fb6d",
+    allow_patterns=["*.json", "*.txt", "*.jinja"])
 ```
 
 Then run the unittest command in that environment. The full GPU smoke test checks real 4-bit

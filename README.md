@@ -1,5 +1,9 @@
 # Samsung PRISM 26VI05 - VLM image-quality evaluation pipeline (English)
 
+> This is the improved `codex/internvl35-model-modified` branch. Start with
+> [MODIFIED_PIPELINE.md](MODIFIED_PIPELINE.md) for the current run instructions,
+> shared pipeline fixes, verification evidence and remaining GPU checks.
+
 End-to-end pipeline: **dataset with pre-defined ground-truth scores -> pairwise JSONL -> zero-shot
 benchmark -> QLoRA fine-tuning -> CoT inference -> validation gate -> Python score engine ->
 agreement analytics -> diagnostic audit.**
@@ -8,17 +12,17 @@ agreement analytics -> diagnostic audit.**
 This fork uses **`OpenGVLab/InternVL3_5-2B-HF`** (Apache-2.0, InternViT + Qwen3),
 a different vision-language architecture from Qwen2.5-VL, with a Qwen3 text backbone. See
 [`MODEL_CHANGE.md`](MODEL_CHANGE.md) for the exact scope, verification and Colab instructions.
-Generation, ground-truth labels, splits, P1-P4 prompts, QLoRA hyperparameters and evaluation stay unchanged.
+The model integration is combined with the shared data, training, prediction and evaluation fixes described in the guide.
 
 ## How to run
-- **With Claude Code (local GPU):** open this folder in Claude Code and say
-  *"Follow CLAUDE.md and run the whole pipeline."* It handles setup, fixes and the final report.
-- **Manually:** see the numbered steps in `CLAUDE.md`, or `./run_all.sh`.
-- **Google Colab:** upload this zip to Drive, open `colab_run_pipeline.ipynb`, choose a GPU runtime, Run all.
+1. Open this model's notebook using the links in [MODIFIED_PIPELINE.md](MODIFIED_PIPELINE.md).
+2. Choose a fresh Colab GPU runtime, supply the team's identical dataset when available, and run the cells in order.
+3. Run the GPU smoke check before baseline, training and inference. Inspect the evaluation report and coverage together.
 
-Hardware: NVIDIA GPU with >= 16 GB VRAM recommended; Colab reduces `model.max_image_patches` to 4 on T4.
-Run the GPU smoke test to check actual memory use before long stages.
-Rough times: dataset 15-30 min (CPU), prompt study + baseline 1-3 h, training 2-6 h, final inference 1-2 h.
+For local execution, use `python scripts/run_pipeline.py --cpu-only` for generation and CPU checks,
+then `python scripts/run_pipeline.py --stages baseline train infer evaluate` for the model stages.
+Add `--config configs/colab_runtime.yaml` when using the notebook's generated settings.
+Full pretrained accuracy and peak GPU memory still require an actual Colab run.
 
 ## The dataset: the "24 generation" minute-change ladder (`prism/ladder.py`)
 Every Original gets 1 unchanged control + **6 single-factor edit families x 4 minute levels = 24 releases**
@@ -79,28 +83,22 @@ pairwise preference accuracy. Ladder sensitivity: detection rate per level, just
 monotonicity, false alarms on the controls, attribution precision.
 Coverage: valid-output rate after the gate. Baseline vs fine-tuned side by side.
 
-## What makes PRISM different
-1. **It measures the smallest change a VLM can see.** Each of 13 defect types comes in 4 minute levels, so
-   the evaluation reports a just-noticeable level per defect, instead of hiding blindness inside an average
-   (a model blind to every change below 0.05 still gets a pooled MAE of ~0.009).
-2. **Ground truth with zero manual annotation that anyone can audit.** Every score is computed from what was
-   drawn (dE2000, pixels, % of characters) and ships with its formula; one script re-computes all of them and
-   cross-checks the pixels.
-3. **It knows WHAT is wrong and WHERE, and whether its explanation is true.** Training targets name the
-   region; the evaluation scores location and quantity in the model's own explanation.
-4. **It does not confuse defects.** Single-factor edits give an edit x metric leakage matrix and an
-   attribution-precision score - impossible with mixed-defect datasets.
-5. **It acts, not just grades.** `07_judge.py` returns ACCEPT/REJECT, the failing metric, the region and the
-   repair action for any original/edited pair; the evaluation reports gate accuracy and diagnosis accuracy.
-6. **It improves itself.** `08_data_engine.py` generates new training data only for the defects the model
-   still misses, round after round.
-7. **It tests generalisation.** 23 document/UI types with an unseen-template test option; this fork
-   runs the 2.2B InternVL3.5 comparison with fp16/SDPA and 4-bit weights for limited-VRAM GPUs.
-8. **Sanity built in.** Unchanged controls measure false alarms; ordering across levels measures consistency.
+## What the pipeline measures
+- Four severity levels for each of the six default edit families, plus unchanged controls.
+  Seven optional families are available in configuration.
+- Synthetic measurement labels from the renderer, including colour distance, geometry and text changes.
+- Missing-output coverage, control false alarms, severity ordering, attribution and release ranking,
+  alongside MAE/RMSE/PLCC/SROCC. Explanations are checked against the known edited region.
+- An optional validation-driven data engine, with test-set results excluded from targeting new training examples.
+- Generalisation to 23 document/UI templates, with an optional held-out-template test.
 
-## No manual annotation
-Every ground-truth score is computed automatically by the renderer during generation (stage 1) and
-used directly for training and evaluation. There is no annotation sheet, rater step or human-label input.
+These are implemented evaluation capabilities. Whether a pretrained or fine-tuned model detects
+the smallest discrepancies must be established by its held-out results.
+
+## Ground-truth labels
+The renderer creates deterministic synthetic measurement labels for training and evaluation.
+They describe controlled changes; they are not human quality judgments. Agreement with human
+reviewers and real scans requires a separate held-out annotated dataset.
 
 ## Layout
 ```

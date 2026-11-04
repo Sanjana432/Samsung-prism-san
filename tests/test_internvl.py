@@ -144,6 +144,12 @@ class NativeInternVLTests(unittest.TestCase):
             resumed = predict(model, self.proc, self.cfg, self.items, "P4", out_path=out, batch_size=2)
             generator.assert_not_called()
         self.assertEqual(original, resumed)
+        manifest["identity"]["processor"]["image_processor"]["max_patches"] = 999
+        Path(out + ".manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        with patch("prism.vlm.generate") as generator:
+            with self.assertRaises(ValueError):
+                predict(model, self.proc, self.cfg, self.items, "P4", out_path=out, batch_size=2)
+            generator.assert_not_called()
 
     def test_pairs_remain_nested_ordered_and_padding_is_restored(self):
         with patch.object(self.proc.image_processor, "preprocess", wraps=self.proc.image_processor.preprocess) as vision:
