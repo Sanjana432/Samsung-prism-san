@@ -1,5 +1,9 @@
 # Sanjana's PRISM model comparison: SmolVLM2
 
+> This is the improved `codex/smolvlm2-model-modified` branch. Start with
+> [MODIFIED_PIPELINE.md](MODIFIED_PIPELINE.md) for the current run instructions,
+> shared pipeline fixes, verification evidence and remaining GPU checks.
+
 This branch replaces the Qwen2.5-VL-3B integration with
 [`HuggingFaceTB/SmolVLM2-2.2B-Instruct`](https://huggingface.co/HuggingFaceTB/SmolVLM2-2.2B-Instruct).
 It keeps the team's experiment and evaluation pipeline in place.
@@ -29,16 +33,15 @@ It keeps the team's experiment and evaluation pipeline in place.
 | `tests/test_smolvlm.py` | Integration regression checks |
 | `README.md`, `PIPELINE.md`, this file | Model identification and run instructions |
 
-The renderer, all 23 templates, 24-release ladder, measured ground truth, metric definitions,
-P1-P4 prompt text, target text, split assignment, QLoRA r/alpha/dropout/target modules, optimization,
-checkpoint selection, validation gate/retry rules, ranking and evaluation calculations are unchanged.
-No website files are present in this upstream repository; the earlier local PRISM site is unchanged.
+The renderer, templates, 24-release design, metric definitions, P1-P4 wording and QLoRA hyperparameters retain the team experiment.
+This improved branch also changes integrity, checkpoint/resume safety, validation and evaluation behavior as documented in
+[MODIFIED_PIPELINE.md](MODIFIED_PIPELINE.md).
 
 ## Run on Colab
 
-1. [Open the model branch's notebook in Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/smolvlm2-model/colab_run_pipeline.ipynb).
+1. [Open the model branch's notebook in Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/smolvlm2-model-modified/colab_run_pipeline.ipynb).
 2. Select a GPU runtime. The setup downloads this branch into
-   `MyDrive/prism_ladder_smolvlm2`, separate from the Qwen experiment's `prism_ladder` folder.
+   `MyDrive/prism_ladder_smolvlm2_modified`, separate from the Qwen experiment's `prism_ladder` folder.
 3. Run the setup cells. On GPUs below 20 GB the notebook sets
    `model.image_longest_edge: 768` and `inference.batch_size: 2`.
 4. Use the **same original images, generated releases, metadata and split files** as the team's
@@ -57,7 +60,10 @@ For a fair cross-model comparison, match the sample IDs, train/validation/test m
 and scoring rules, and record the model's preprocessing and training settings. The model's own
 tiling is different from Qwen's pixel-budget processor; there is no added crop, detector or scoring aid.
 
-## Verification
+## Initial model integration verification
+
+The results below describe the original model integration. For the expanded modified-branch
+regressions and CPU pilot, see [MODIFIED_PIPELINE.md](MODIFIED_PIPELINE.md).
 
 Verified locally on 4 November 2026: **14/14 integration tests passed** with the actual public
 processor files and `transformers==4.51.3`, `peft==0.15.2`, `trl==0.17.0` (CPU PyTorch 2.14.0).
@@ -82,7 +88,8 @@ native-processor tests. Without it, those tests are explicitly skipped. No model
 import os
 from huggingface_hub import snapshot_download
 os.environ['SMOLVLM_PROCESSOR_DIR'] = snapshot_download(
-    'HuggingFaceTB/SmolVLM2-2.2B-Instruct', allow_patterns=['*.json', '*.txt', '*.model'])
+    'HuggingFaceTB/SmolVLM2-2.2B-Instruct', revision='482adb537c021c86670beed01cd58990d01e72e4',
+    allow_patterns=['*.json', '*.txt', '*.model'])
 ```
 
 Then launch the unittest command in the same environment. The repository's unchanged CPU self-test is:
