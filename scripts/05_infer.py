@@ -22,20 +22,47 @@ from prism.scoring import rank_releases  # noqa: E402
 
 
 def release_report(cfg, rows, items, path):
-    meta = {it["id"]: it for it in items}
-    by_s = defaultdict(dict)
-    for r in rows:
-        if r["pred"] and meta[r["id"]]["release_id"] != "control_0":
-            by_s[meta[r["id"]]["sample_id"]][meta[r["id"]]["release_id"]] = r["pred"]
-    out = []
-    for sid, rels in sorted(by_s.items()):
-        ranking, cats = rank_releases(rels, cfg["scoring"]["category_weights"])
-        for rid in sorted(rels):
-            out.append({"sample_id": sid, "release_id": rid, **rels[rid],
-                        **{f"cat_{c}": cats[rid][c] for c in CATEGORIES}, "overall": cats[rid]["overall"],
-                        "rank": ranking.index(rid) + 1, "is_best_release": rid == ranking[0]})
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    pd.DataFrame(out).to_excel(path, index=False)
+    """Show every expected edited release; never choose a winner from incomplete predictions."""
+    from prism.validation import validate_scores
+    meta = {item["id"]: item for item in items}
+    if len(meta) != len(items):
+        raise ValueError("duplicate expected release-report IDs")
+    predictions = {}
+    for row in rows:
+        if row["id"] not in meta or row["id"] in predictions:
+            raise ValueError("unknown/duplicate prediction in release report")
+        predictions[row["id"]] = row
+    expected = defaultdict(list)
+    for item in items:
+        if item["release_id"] != "control_0":
+            expected[item["sample_id"]].append(item)
+    out, coverage = [], []
+    for sid, members in sorted(expected.items()):
+        valid = {}
+        for item in members:
+            row = predictions.get(item["id"])
+            score = validate_scores(row.get("pred"))[0] if row else None
+            if score is not None:
+                valid[item["release_id"]] = score
+        complete = len(valid) == len(members)
+        ranking, cats = rank_releases(valid, cfg["scoring"]["category_weights"]) if valid else ([], {})
+        quality = {rid: (cats[rid]["overall"], cats[rid]["technical"]) for rid in ranking}
+        coverage.append({"sample_id": sid, "expected_releases": len(members), "valid_releases": len(valid),
+                         "complete_group": complete, "selection_status": "complete" if complete else "incomplete_unranked"})
+        for item in sorted(members, key=lambda value: value["release_id"]):
+            rid, pair_id = item["release_id"], item["id"]
+            score = valid.get(rid)
+            rank = (1 + sum(q > quality[rid] for q in quality.values())) if complete and score is not None else None
+            out.append({"sample_id": sid, "release_id": rid, "pair_id": pair_id,
+                        "prediction_status": "valid" if score is not None else ("invalid" if pair_id in predictions else "missing"),
+                        "complete_group": complete, **{key: score[key] if score else None for key in METRIC_KEYS},
+                        **{f"cat_{c}": cats[rid][c] if score else None for c in CATEGORIES},
+                        "overall": cats[rid]["overall"] if score else None, "rank": rank,
+                        "is_best_release": rank == 1})
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with pd.ExcelWriter(path, engine="openpyxl") as writer:
+        pd.DataFrame(out).to_excel(writer, sheet_name="releases", index=False)
+        pd.DataFrame(coverage).to_excel(writer, sheet_name="coverage", index=False)
     print(f"[infer] release report -> {path}")
 
 
