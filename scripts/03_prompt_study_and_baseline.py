@@ -41,11 +41,15 @@ def main():
     ap.add_argument("--skip_study", action="store_true", help="use P4 directly")
     a = ap.parse_args()
     cfg = load_config(a.config)
+    from prism.dataset import assert_dataset_ready
+    assert_dataset_ready(cfg)
     val = read_jsonl(P(cfg, "pairs_dir", "val.jsonl"))
     test = read_jsonl(P(cfg, "pairs_dir", "test.jsonl"))
     if cfg["inference"]["test_limit"]:
         test = test[: cfg["inference"]["test_limit"]]
     gt = {r["id"]: r["scores"] for r in val + test}
+    if not val or not test:
+        raise ValueError("Baseline needs nonempty validation and test splits; generate more Originals per template first")
     model, proc = load_model(cfg), load_processor(cfg)
     pred_dir, rep_dir = P(cfg, "predictions_dir"), P(cfg, "reports_dir")
     os.makedirs(rep_dir, exist_ok=True)
