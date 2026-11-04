@@ -27,7 +27,7 @@ def compute_dtype():
 
 def load_processor(cfg, padding_side="left"):
     m = cfg["model"]
-    proc = AutoProcessor.from_pretrained(m["base"])
+    proc = AutoProcessor.from_pretrained(m["base"], revision=m.get("revision"))
     proc.image_processor.max_soft_tokens = m["max_soft_tokens"]
     proc.tokenizer.padding_side = padding_side
     return proc
@@ -102,7 +102,7 @@ def prepare_training_model(model, cfg):
 def load_model(cfg, adapter: str | None = None):
     if not torch.cuda.is_available():
         raise SystemExit("A CUDA GPU is required for model stages (03/04/05). See README - 'No GPU?'.")
-    model = VLMClass.from_pretrained(cfg["model"]["base"], quantization_config=bnb_config(cfg),
+    model = VLMClass.from_pretrained(cfg["model"]["base"], revision=cfg["model"].get("revision"), quantization_config=bnb_config(cfg),
                                      dtype=compute_dtype(), device_map="auto", attn_implementation="sdpa")
     if adapter:
         from peft import PeftModel
@@ -121,45 +121,49 @@ def generate(model, proc, cfg, items: list, prompt: str, max_new_tokens: int) ->
 
 def predict(model, proc, cfg, items: list, prompt_id: str, out_path: str | None = None,
             batch_size: int | None = None, max_new_tokens: int | None = None, log_every: int = 20) -> list:
-    """Run inference + validation gate + one retry. Appends to out_path and resumes if it exists."""
+    """Validated inference with content-aware resume, one retry and crash-safe appends."""
+    from .runtime import prepare_prediction_run
     inf = cfg["inference"]
     bs = batch_size or inf["batch_size"]
+    if bs < 1:
+        raise ValueError("batch_size must be positive")
     mnt = max_new_tokens or (inf["max_new_tokens"] if prompt_id == "P4" else 256)
-    done = {}
-    if out_path and os.path.exists(out_path):
-        with open(out_path) as f:
-            for line in f:
-                if line.strip():
-                    r = json.loads(line)
-                    done[r["id"]] = r
-    todo = [it for it in items if it["id"] not in done]
-    if out_path:
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    fh = open(out_path, "a") if out_path else None
-    rows, t0 = list(done.values()), time.time()
-    for i in range(0, len(todo), bs):
-        batch = todo[i:i + bs]
-        try:
-            raws = generate(model, proc, cfg, batch, PROMPTS[prompt_id], mnt)
-        except torch.cuda.OutOfMemoryError:
-            torch.cuda.empty_cache()
-            raws = [generate(model, proc, cfg, [it], PROMPTS[prompt_id], mnt)[0] for it in batch]
-        for it, raw in zip(batch, raws):
-            scores, errs = validate_output(raw)
-            row = {"id": it["id"], "sample_id": it["sample_id"], "release_id": it["release_id"], "prompt_id": prompt_id,
-                   "pred": scores, "raw": raw, "retried": False, "errors": errs}
-            if scores is None:  # one retry with the strict JSON-only prompt
-                raw2 = generate(model, proc, cfg, [it], RETRY, inf["retry_max_new_tokens"])[0]
-                scores2, errs2 = validate_output(raw2)
-                row.update({"pred": scores2, "retried": True, "retry_raw": raw2, "errors": errs + ["retry:"] + errs2})
-            rows.append(row)
-            if fh:
-                fh.write(json.dumps(row) + "\n")
-                fh.flush()
-        n = i + len(batch)
-        if n % log_every < bs or n == len(todo):
-            el = time.time() - t0
-            print(f"  [{prompt_id}] {n}/{len(todo)}  {el / n:.1f}s/pair  eta {el / n * (len(todo) - n) / 60:.0f} min", flush=True)
-    if fh:
-        fh.close()
-    return rows
+    saved = prepare_prediction_run(model, cfg, items, prompt_id, mnt, out_path, processor=proc)
+    done = {row["id"]: row for row in saved}
+    todo = [item for item in items if item["id"] not in done]
+    fh = open(out_path, "a", encoding="utf-8") if out_path else None
+    t0 = time.time()
+    try:
+        for i in range(0, len(todo), bs):
+            batch = todo[i:i + bs]
+            try:
+                raws = generate(model, proc, cfg, batch, PROMPTS[prompt_id], mnt)
+            except torch.cuda.OutOfMemoryError:
+                torch.cuda.empty_cache()
+                raws = [generate(model, proc, cfg, [it], PROMPTS[prompt_id], mnt)[0] for it in batch]
+            if len(raws) != len(batch):
+                raise RuntimeError("model returned a different number of answers than input pairs")
+            for it, raw in zip(batch, raws):
+                scores, errors = validate_output(raw)
+                row = {"id": it["id"], "sample_id": it["sample_id"], "release_id": it["release_id"],
+                       "prompt_id": prompt_id, "pred": scores, "raw": raw, "effective_raw": raw,
+                       "retried": False, "errors": errors}
+                if scores is None:
+                    retry = generate(model, proc, cfg, [it], RETRY, inf["retry_max_new_tokens"])[0]
+                    scores2, errors2 = validate_output(retry)
+                    row.update(pred=scores2, retried=True, retry_raw=retry, effective_raw=retry,
+                               errors=errors + ["retry:"] + errors2)
+                done[it["id"]] = row
+                if fh:
+                    fh.write(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n")
+                    fh.flush()
+                    os.fsync(fh.fileno())
+            n = i + len(batch)
+            if n % log_every < bs or n == len(todo):
+                elapsed = time.time() - t0
+                print(f"  [{prompt_id}] {n}/{len(todo)}  {elapsed / n:.1f}s/pair  "
+                      f"eta {elapsed / n * (len(todo) - n) / 60:.0f} min", flush=True)
+    finally:
+        if fh:
+            fh.close()
+    return [done[item["id"]] for item in items]

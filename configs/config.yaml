@@ -50,6 +50,7 @@ model:
   # Google Gemma4 E2B, Apache-2.0. 2.3B effective / 5.1B total including embeddings.
   # Actual T4 memory fit must be checked by gpu_smoke_test.py; fp16/SDPA, NF4 weights.
   base: google/gemma-4-E2B-it
+  revision: 4adf15748de9e1a0097b6274cee9c15836c41c37  # verified processor/weights snapshot for reproducible comparisons
   local_dir: models/gemma-4-E2B-it   # if this folder exists it is used instead of downloading `base`
                                 # (relative to the project root, or an absolute path; works offline)
   max_soft_tokens: 280          # native per-image patch budget; retain minute-detail input on T4
