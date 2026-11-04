@@ -87,6 +87,8 @@ def prepare_prediction_run(model, cfg, items, prompt_id, max_new_tokens, out_pat
     fingerprint = digest(identity)
     if sidecar.exists():
         saved = json.loads(sidecar.read_text(encoding="utf-8"))
+        if not isinstance(saved, dict) or not isinstance(saved.get("identity"), dict) or digest(saved["identity"]) != saved.get("fingerprint"):
+            raise ValueError("Prediction resume refused: corrupt provenance manifest")
         if saved["fingerprint"] != fingerprint:
             raise ValueError("Prediction resume refused: model, adapter, data, prompts or settings changed. "
                              "Use a new output name or archive the previous run.")
