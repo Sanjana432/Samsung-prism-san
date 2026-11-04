@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -127,6 +128,22 @@ class NativeInternVLTests(unittest.TestCase):
         self.assertEqual(self.proc.image_processor.size, {"height": 448, "width": 448})
         self.assertEqual(self.proc.image_seq_length, 256)
         self.assertTrue(assistant_marker(self.proc))
+
+    def test_native_prediction_manifest_roundtrip(self):
+        """Real native processor metadata must serialize and survive a no-generation resume."""
+        from prism.runtime import digest
+        model = SimpleNamespace(config=SimpleNamespace(_commit_hash="cpu-integration-fixture"))
+        out = str(Path(self.temp.name) / "native_predictions.jsonl")
+        with patch("prism.vlm.generate", return_value=[ANSWER] * len(self.items)) as generator:
+            original = predict(model, self.proc, self.cfg, self.items, "P4", out_path=out, batch_size=2)
+            self.assertEqual(generator.call_count, 1)
+        manifest = json.loads(Path(out + ".manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["fingerprint"], digest(manifest["identity"]))
+        self.assertEqual(manifest["identity"]["processor"]["image_processor"]["max_patches"], 4)
+        with patch("prism.vlm.generate") as generator:
+            resumed = predict(model, self.proc, self.cfg, self.items, "P4", out_path=out, batch_size=2)
+            generator.assert_not_called()
+        self.assertEqual(original, resumed)
 
     def test_pairs_remain_nested_ordered_and_padding_is_restored(self):
         with patch.object(self.proc.image_processor, "preprocess", wraps=self.proc.image_processor.preprocess) as vision:
