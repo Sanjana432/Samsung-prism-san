@@ -209,7 +209,14 @@ def training_complete(out_dir, fingerprint):
         log = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
-    return (log.get("completed") is True and log.get("run_fingerprint") == fingerprint
+    try:
+        best = json.loads((Path(out_dir) / "best_adapter" / "val_score.json").read_text(encoding="utf-8"))
+        score = best["selection_score"]
+        valid_best = (best.get("run_fingerprint") == fingerprint and isinstance(score, Real)
+                      and not isinstance(score, bool) and math.isfinite(score) and 0 <= score <= 1.5)
+    except (OSError, ValueError, KeyError):
+        valid_best = False
+    return (valid_best and log.get("completed") is True and log.get("run_fingerprint") == fingerprint
             and adapter_complete(Path(out_dir) / "best_adapter")
             and adapter_complete(Path(out_dir) / "final_adapter"))
 
