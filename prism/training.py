@@ -76,6 +76,11 @@ def validate_training_pairs(train, val):
         if len(ids) != len(set(ids)):
             raise ValueError(f"Duplicate pair IDs in {split} split")
         for item in items:
+            scores = item.get("scores")
+            if not isinstance(scores, dict) or set(scores) != set(METRIC_KEYS) or not all(
+                    isinstance(value, Real) and not isinstance(value, bool) and math.isfinite(value)
+                    and 0 <= value <= 1 for value in scores.values()):
+                raise ValueError(f"{split} pair {item['id']} has invalid ground-truth scores")
             target_scores, _ = validate_output(item.get("target", ""))
             if target_scores is None or any(abs(target_scores[key] - item["scores"][key]) > 1e-4 for key in METRIC_KEYS):
                 raise ValueError(f"{split} pair {item['id']} has a missing/invalid target or scores inconsistent with its target")
@@ -117,14 +122,19 @@ def training_identity(cfg, processor, train, val):
             versions[name] = importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError:
             versions[name] = None
-    payload = {"schema": 1, "kind": "prism-training", "model": cfg["model"], "qlora": cfg["qlora"],
+    root = Path(__file__).resolve().parents[1]
+    source_hashes = {name: _file_hash(root / name) for name in (
+        "prism/training.py", "prism/vlm.py", "prism/prompts.py", "prism/validation.py", "scripts/04_train_qlora.py")
+        if (root / name).is_file()}
+    payload = {"schema": 2, "kind": "prism-training", "model": cfg["model"], "qlora": cfg["qlora"],
                "train": cfg["train"], "seed": cfg["project_seed"], "inference": cfg["inference"],
                "processor_class": type(processor).__name__, "processor": proc_config,
                "chat_template": getattr(processor, "chat_template", None) or getattr(tokenizer, "chat_template", None),
                "tokenizer_class": type(tokenizer).__name__, "vocabulary": _digest(tokenizer.get_vocab()),
                "special_tokens": tokenizer.special_tokens_map,
                "system": SYSTEM, "prompts": PROMPTS, "training_prompt": TRAIN_PROMPT,
-               "train_split": records(train), "val_split": records(val), "versions": versions}
+               "train_split": records(train), "val_split": records(val), "versions": versions,
+               "source_sha256": source_hashes}
     return {"fingerprint": _digest(payload), "payload": payload}
 
 
@@ -150,9 +160,13 @@ def ensure_training_run(out_dir, identity):
 
 def adapter_complete(path):
     path = Path(path)
-    return ((path / "adapter_config.json").is_file()
-            and any((path / name).is_file() and (path / name).stat().st_size > 0
-                    for name in ("adapter_model.safetensors", "adapter_model.bin")))
+    try:
+        config = json.loads((path / "adapter_config.json").read_text(encoding="utf-8"))
+        return (isinstance(config, dict) and config.get("peft_type") == "LORA"
+                and any((path / name).is_file() and (path / name).stat().st_size > 0
+                        for name in ("adapter_model.safetensors", "adapter_model.bin")))
+    except (OSError, ValueError):
+        return False
 
 
 def latest_checkpoint(out_dir):
@@ -167,8 +181,10 @@ def latest_checkpoint(out_dir):
         try:
             step = int(path.name.removeprefix("checkpoint-"))
             state = json.loads((path / "trainer_state.json").read_text(encoding="utf-8"))
-            valid = (state["global_step"] == step and adapter_complete(path)
-                     and all((path / name).is_file() for name in ("optimizer.pt", "scheduler.pt", "rng_state.pth")))
+            valid = (isinstance(state["global_step"], int) and not isinstance(state["global_step"], bool)
+                     and state["global_step"] == step and adapter_complete(path)
+                     and all((path / name).is_file() and (path / name).stat().st_size > 0
+                             for name in ("optimizer.pt", "scheduler.pt", "rng_state.pth")))
         except (OSError, ValueError, KeyError):
             valid = False
         if valid:
@@ -204,12 +220,12 @@ def context_preflight(train, val, collator, cfg, out_path=None, fingerprint=None
         raise ValueError("Training and validation splits must both contain image pairs")
     if out_path and Path(out_path).exists() and fingerprint:
         report = json.loads(Path(out_path).read_text(encoding="utf-8"))
-        if (report.get("fingerprint") == fingerprint and report.get("ok") is True
+        if (report.get("schema") == 2 and report.get("fingerprint") == fingerprint and report.get("ok") is True
                 and report.get("n_pairs") == len(train) + len(val)):
             print("[context] verified cached preflight for identical inputs and processor")
             return report
     maximum = cfg["model"]["max_seq_len"]
-    failures, n_failed, largest, largest_generation = [], 0, 0, 0
+    failures, n_failed, largest, largest_generation, largest_answer = [], 0, 0, 0, 0
     for split, items in (("train", train), ("val", val)):
         for index, item in enumerate(items):
             try:
@@ -220,6 +236,10 @@ def context_preflight(train, val, collator, cfg, out_path=None, fingerprint=None
                 supervised = (labels[0] != -100).nonzero(as_tuple=False).flatten()
                 if not len(supervised):
                     raise ValueError("answer has no supervised tokens")
+                largest_answer = max(largest_answer, len(supervised))
+                if len(supervised) > cfg["inference"]["max_new_tokens"]:
+                    raise ValueError(f"answer requires {len(supervised)} output tokens but max_new_tokens="
+                                     f"{cfg['inference']['max_new_tokens']}; output would be truncated")
                 if bool((labels[attention == 0] != -100).any()):
                     raise ValueError("padding is incorrectly supervised")
                 if bool((labels[labels != -100] < 0).any()):
@@ -236,9 +256,10 @@ def context_preflight(train, val, collator, cfg, out_path=None, fingerprint=None
                     failures.append({"split": split, "id": item.get("id", index), "error": str(error)})
             if (index + 1) % 100 == 0 or index + 1 == len(items):
                 print(f"[context] {split} {index + 1}/{len(items)}", flush=True)
-    report = {"schema": 1, "fingerprint": fingerprint, "ok": n_failed == 0,
+    report = {"schema": 2, "fingerprint": fingerprint, "ok": n_failed == 0,
               "n_pairs": len(train) + len(val), "n_failed": n_failed,
               "max_training_tokens": largest, "max_generation_tokens": largest_generation,
+              "max_answer_tokens": largest_answer,
               "max_seq_len": maximum, "first_failures": failures}
     if out_path:
         atomic_json(out_path, report)
