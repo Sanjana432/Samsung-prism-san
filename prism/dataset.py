@@ -11,6 +11,9 @@ import math
 import os
 from pathlib import Path
 import tempfile
+import copy
+import uuid
+from importlib.metadata import version
 
 from PIL import Image, ImageChops
 
@@ -68,6 +71,24 @@ def dataset_fingerprint(cfg):
     return canonical_hash(parts)
 
 
+def assert_dataset_ready(cfg):
+    """Fail before model loading if publication was interrupted or published data changed."""
+    base = Path(cfg.get("_root", ROOT)) / cfg["paths"]["pairs_dir"]
+    if (base / ".publishing.json").exists():
+        raise ValueError("dataset publication was interrupted; rerun scripts/02_build_splits.py before model stages")
+    manifest_path = base / "split_manifest.json"
+    if not manifest_path.exists():
+        raise ValueError("dataset manifest missing; run scripts/02_build_splits.py before model stages")
+    with open(manifest_path, encoding="utf-8") as handle:
+        manifest = json.load(handle)
+    if not manifest.get("dataset_fingerprint"):
+        raise ValueError("dataset has no integrity fingerprint; validate existing team data with scripts/02_build_splits.py")
+    current = dataset_fingerprint(cfg)
+    if manifest["dataset_fingerprint"] != current:
+        raise ValueError("published dataset/image content no longer matches its manifest; use an intact shared copy or rerun stage 02")
+    return current
+
+
 def atomic_json(path, value):
     _atomic_text(path, json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False) + "\n")
 
@@ -115,17 +136,18 @@ def validate_samples(samples, root=None, verify_images=True):
         expected = {("control", 0)} | {(k, level) for k in knobs for level in range(1, 5)}
         settings, ids = set(), set()
         original_name = sample.get("original_image_path")
-        if not original_name:
+        if not original_name or original_name in paths:
             raise ValueError(f"{sid}: original_image_path is required")
+        paths.add(original_name)
         original = None
         if verify_images:
             p = image_path(original_name, root)
-            digest = file_sha256(p)
-            if digest in originals:
-                raise ValueError(f"identical Original bytes under different sample IDs: {originals[digest]} and {sid}")
-            originals[digest] = sid
             with Image.open(p) as image:
                 original = image.convert("RGB")
+            digest = hashlib.sha256(str(original.size).encode() + original.tobytes()).hexdigest()
+            if digest in originals:
+                raise ValueError(f"identical Original pixels under different sample IDs: {originals[digest]} and {sid}")
+            originals[digest] = sid
             if list(original.size) != sample.get("image_size"):
                 raise ValueError(f"{sid}: Original dimensions do not match metadata")
         for release in releases:
@@ -203,7 +225,49 @@ def generation_fingerprint(cfg):
                 "ladder": {k: v for k, v in cfg["ladder"].items() if k != "n_originals"},
                 "scoring": cfg["scoring"]}
     settings["dataset"] = {k: v for k, v in cfg["dataset"].items() if k != "workers"}
-    sources = {f"prism/{name}.py": file_sha256(root / "prism" / f"{name}.py") for name in
+    sources = {f"prism/{name}.py": hashlib.sha256((root / "prism" / f"{name}.py").read_bytes().replace(b"\r\n", b"\n")).hexdigest() for name in
                ("ladder", "render", "templates", "document", "objects", "metrics", "reasoning", "pixel_evidence")}
     fonts = {p.name: file_sha256(p) for p in sorted((root / "assets/fonts").glob("*.ttf"))}
-    return canonical_hash({"settings": settings, "renderer": sources, "fonts": fonts})
+    libraries = {name: version(name) for name in ("Pillow", "numpy", "scikit-image")}
+    return canonical_hash({"settings": settings, "renderer": sources, "fonts": fonts, "libraries": libraries})
+
+
+def render_sample_once(cfg, index, sample_id=None):
+    """Stage a whole sample with its recovery sidecar, then publish without overwriting images."""
+    from .ladder import make_ladder_sample
+    sid = sample_id or f"ladder_{index:04d}"
+    if not sid or Path(sid).name != sid or "/" in sid or "\\" in sid:
+        raise ValueError("sample_id must be a single safe directory name")
+    fingerprint = cfg.get("_generation_fingerprint") or generation_fingerprint(cfg)
+    root, image_dir = Path(cfg.get("_root", ROOT)), cfg["paths"]["images_dir"]
+    destination = root / image_dir / sid
+    if destination.exists():
+        sidecar = destination / ".prism_sample.json"
+        if not sidecar.exists():
+            raise ValueError(f"{destination} exists without recovery metadata; move it aside or use a new dataset directory")
+        with open(sidecar, encoding="utf-8") as handle:
+            saved = json.load(handle)
+        if saved["generation_fingerprint"] != fingerprint:
+            raise ValueError(f"{sid}: generation settings/code/fonts differ from the existing sample")
+        validate_samples([saved["sample"]], root=root)
+        return saved["sample"]
+    staged_cfg = copy.deepcopy(cfg)
+    staging = f"{image_dir}/.pending/{uuid.uuid4().hex}"
+    staged_cfg["paths"]["images_dir"] = staging
+    record = make_ladder_sample(staged_cfg, index)
+    validate_samples([record], root=root)
+    old_sid = record["sample_id"]
+    old_prefix, new_prefix = f"{staging}/{old_sid}", f"{image_dir}/{sid}"
+    def rebase(value):
+        if isinstance(value, dict):
+            return {k: rebase(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [rebase(v) for v in value]
+        return new_prefix + value[len(old_prefix):] if isinstance(value, str) and value.startswith(old_prefix) else value
+    record = rebase(record)
+    record["sample_id"] = sid
+    staged = root / staging / old_sid
+    atomic_json(staged / ".prism_sample.json", {"generation_fingerprint": fingerprint, "sample": record})
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(staged, destination)
+    return record
