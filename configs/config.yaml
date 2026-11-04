@@ -50,6 +50,7 @@ model:
   # InternVL vision encoder + Qwen3 text decoder; Apache-2.0. Different VLM, shared Qwen ancestry.
   # 4-bit NF4 + fp16/SDPA on a free Colab T4. Run gpu_smoke_test.py before long jobs.
   base: OpenGVLab/InternVL3_5-2B-HF
+  revision: 3f301ffcf3dcbb47893afae6650ea3e78d96fb6d  # verified processor/weights snapshot for reproducible comparisons
   local_dir: models/InternVL3_5-2B-HF   # if this folder exists it is used instead of downloading `base`
                                 # (relative to the project root, or an absolute path; works offline)
   max_image_patches: 4          # native 448 px tiles, plus overview when split; 256 tokens/tile
