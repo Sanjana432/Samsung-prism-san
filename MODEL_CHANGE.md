@@ -34,9 +34,9 @@ No website files exist in this upstream repository; the earlier PRISM site is un
 
 ## Open and run
 
-[Open this branch's Colab notebook](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/internvl35-model/colab_run_pipeline.ipynb).
+[Open this branch's Colab notebook](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/internvl35-model/colab_run_pipeline.ipynb).
 
-1. Select a GPU runtime. The notebook clones branch `codex/internvl35-model` into
+1. Select a GPU runtime. The notebook clones branch `internvl35-model` into
    `MyDrive/prism_ladder_internvl35`.
 2. Supply the exact same team `data/` directory (originals, releases, metadata and split files)
    used by the other model branches. Do not copy another model's adapters or predictions.
