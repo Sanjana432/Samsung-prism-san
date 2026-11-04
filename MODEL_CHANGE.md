@@ -1,7 +1,11 @@
 # PRISM model branch: Google Gemma4 E2B
 
+> This is the improved `codex/gemma4-model-modified` branch. Start with
+> [MODIFIED_PIPELINE.md](MODIFIED_PIPELINE.md) for the current run instructions,
+> shared pipeline fixes, verification evidence and remaining GPU checks.
+
 Model: [`google/gemma-4-E2B-it`](https://huggingface.co/google/gemma-4-E2B-it), Apache-2.0.
-Branch: `codex/gemma4-model`. This is a distinct Gemma architecture, independent of Qwen.
+Branch: `codex/gemma4-model-modified`. This is a distinct Gemma architecture, independent of Qwen.
 
 Gemma4 supports interleaved image pairs and native system instructions. The E2B version is a
 resource-conscious candidate from the current Google model family. Its published name means
@@ -25,20 +29,19 @@ No ranking against the other PRISM models is claimed before the shared dataset i
   These newer APIs are required by Gemma4; the original TRL path and Trainer fallback are retained.
 - Colab notebook and model notes identify the correct model branch and separate Drive workspace.
 
-Generation, templates, the 24-release ladder, measured labels, P1-P4 wording, split assignment,
-metric definitions, QLoRA r/alpha/dropout/all-linear targets, optimizer schedule, checkpoint selection,
-validation retry rules, scoring and evaluation calculations stay the same. The other branches and
-earlier local website are separate from this model integration.
+The renderer, templates, 24-release design, metric definitions, P1-P4 wording and QLoRA hyperparameters retain the team experiment.
+This improved branch also adds the shared data, checkpoint, prediction and evaluation fixes in
+[MODIFIED_PIPELINE.md](MODIFIED_PIPELINE.md).
 
 ## Access and run
 
-1. [Open this branch in GitHub](https://github.com/Sanjana432/Samsung-prism-san/tree/codex/gemma4-model).
-2. [Open its notebook in Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/gemma4-model/colab_run_pipeline.ipynb).
-3. Select a GPU runtime, then run setup. This branch uses `MyDrive/prism_ladder_gemma4`, so adapters,
+1. [Open this branch in GitHub](https://github.com/Sanjana432/Samsung-prism-san/tree/codex/gemma4-model-modified).
+2. [Open its notebook in Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/gemma4-model-modified/colab_run_pipeline.ipynb).
+3. Select a GPU runtime, then run setup. This branch uses `MyDrive/prism_ladder_gemma4_modified`, so adapters,
    predictions and checkpoints cannot accidentally resume a different model's run.
 4. Copy the team's shared `data/` directory with original/release images, metadata and exact split
    files into this workspace before dataset cells. Do not copy another model's outputs/predictions.
-   The unchanged generator remains available when the shared dataset has not yet been generated.
+   The generator remains available with the same stimuli and new recovery checks.
 5. Run `scripts/gpu_smoke_test.py` before long jobs. It runs real inference, checks the label mask,
    runs one 4-bit LoRA training step and reports peak GPU memory. Colab sets inference batch size 1
    below 20 GB; the native 280-soft-token per-image budget is retained.
@@ -51,7 +54,10 @@ reduces one important cost, but **full pretrained T4 inference/training memory f
 If a T4 still runs out of memory, use a larger GPU or record any lower vision budget explicitly;
 reducing resolution can hide the minute discrepancies being studied.
 
-## Verification
+## Initial model integration verification
+
+The results below describe the original model integration. For the expanded modified-branch
+regressions and CPU pilot, see [MODIFIED_PIPELINE.md](MODIFIED_PIPELINE.md).
 
 Verified on 4 November 2026: **15/15 integration tests passed**, including native processor/mask
 checks, a real 768×1024 rendered pair with the complete 12-line target (**1,285/4,096 tokens**),
@@ -66,7 +72,8 @@ public processor files to enable native processor tests:
 import os
 from huggingface_hub import snapshot_download
 os.environ['GEMMA4_PROCESSOR_DIR'] = snapshot_download(
-    'google/gemma-4-E2B-it', allow_patterns=['*.json', '*.jinja', '*.txt', '*.model'])
+    'google/gemma-4-E2B-it', revision='4adf15748de9e1a0097b6274cee9c15836c41c37',
+    allow_patterns=['*.json', '*.jinja', '*.txt', '*.model'])
 ```
 
 The tests check real paired-image processing, unchanged prompt text, inference-only decoding,

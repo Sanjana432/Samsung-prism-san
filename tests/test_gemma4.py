@@ -185,6 +185,22 @@ class NativeGemma4Tests(unittest.TestCase):
         print(f"[Gemma4 fullpage] 768x1024, 12-line renderer target, sequence={length}/{cfg['model']['max_seq_len']}")
         self.assertLessEqual(length, 4096)
 
+    def test_native_prediction_manifest_roundtrip(self):
+        """Real native processor settings must serialize and bind a resumable prediction run."""
+        from types import SimpleNamespace
+        from prism.runtime import digest
+        model = SimpleNamespace(config=SimpleNamespace(_commit_hash="cpu-integration-fixture"))
+        out = str(Path(self.temp.name) / "native_predictions.jsonl")
+        with patch("prism.vlm.generate", return_value=[ANSWER] * len(self.items)) as generator:
+            original = predict(model, self.proc, self.cfg, self.items, "P4", out_path=out, batch_size=2)
+            self.assertEqual(generator.call_count, 1)
+        manifest = json.loads(Path(out + ".manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["fingerprint"], digest(manifest["identity"]))
+        with patch("prism.vlm.generate") as generator:
+            resumed = predict(model, self.proc, self.cfg, self.items, "P4", out_path=out, batch_size=2)
+            generator.assert_not_called()
+        self.assertEqual(original, resumed)
+
     def test_generate_decodes_only_new_tokens_and_preserves_output_schema(self):
         model = MagicMock(device=torch.device("cpu"))
         def complete(**kwargs):

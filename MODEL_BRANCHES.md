@@ -1,15 +1,18 @@
 # PRISM: four model versions and how to use them
 
+The links below select the four improved `*-modified` branches. The earlier model-only
+branches remain available. See [MODIFIED_PIPELINE.md](MODIFIED_PIPELINE.md) for shared changes.
+
 All four versions live in **one repository**: [Sanjana432/Samsung-prism-san](https://github.com/Sanjana432/Samsung-prism-san).
 A branch is a separately named version of its code. You do not need four GitHub accounts or four
 separate repositories. Open a model's link below to see and download that version.
 
 | Version | Exact model checkpoint | License | Code | Notebook |
 |---|---|---|---|---|
-| SmolVLM2 | `HuggingFaceTB/SmolVLM2-2.2B-Instruct` | Apache-2.0 | [SmolVLM2 branch](https://github.com/Sanjana432/Samsung-prism-san/tree/codex/smolvlm2-model) | [Open Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/smolvlm2-model/colab_run_pipeline.ipynb) |
-| Gemma 4 E2B | `google/gemma-4-E2B-it` | Apache-2.0 | [Gemma branch](https://github.com/Sanjana432/Samsung-prism-san/tree/codex/gemma4-model) | [Open Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/gemma4-model/colab_run_pipeline.ipynb) |
-| InternVL 3.5 2B | `OpenGVLab/InternVL3_5-2B-HF` | Apache-2.0 | [InternVL branch](https://github.com/Sanjana432/Samsung-prism-san/tree/codex/internvl35-model) | [Open Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/internvl35-model/colab_run_pipeline.ipynb) |
-| Phi-3.5 Vision | `microsoft/Phi-3.5-vision-instruct` | MIT | [Phi branch](https://github.com/Sanjana432/Samsung-prism-san/tree/codex/phi35-model) | [Open Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/phi35-model/colab_run_pipeline.ipynb) |
+| SmolVLM2 | `HuggingFaceTB/SmolVLM2-2.2B-Instruct` | Apache-2.0 | [SmolVLM2 branch](https://github.com/Sanjana432/Samsung-prism-san/tree/codex/smolvlm2-model-modified) | [Open Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/smolvlm2-model-modified/colab_run_pipeline.ipynb) |
+| Gemma 4 E2B | `google/gemma-4-E2B-it` | Apache-2.0 | [Gemma branch](https://github.com/Sanjana432/Samsung-prism-san/tree/codex/gemma4-model-modified) | [Open Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/gemma4-model-modified/colab_run_pipeline.ipynb) |
+| InternVL 3.5 2B | `OpenGVLab/InternVL3_5-2B-HF` | Apache-2.0 | [InternVL branch](https://github.com/Sanjana432/Samsung-prism-san/tree/codex/internvl35-model-modified) | [Open Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/internvl35-model-modified/colab_run_pipeline.ipynb) |
+| Phi-3.5 Vision | `microsoft/Phi-3.5-vision-instruct` | MIT | [Phi branch](https://github.com/Sanjana432/Samsung-prism-san/tree/codex/phi35-model-modified) | [Open Colab](https://colab.research.google.com/github/Sanjana432/Samsung-prism-san/blob/codex/phi35-model-modified/colab_run_pipeline.ipynb) |
 
 The original team's Qwen2.5-VL-3B pipeline remains on `main`. It is an additional baseline,
 outside the four versions above. Each model branch contains the complete pipeline, not just a model file.

@@ -15,3 +15,5 @@ data/metadata/
 data/pairs/
 # locally downloaded model weights (see model.local_dir in configs/config.yaml)
 models/
+configs/colab_runtime.yaml
+.verification/

@@ -1,5 +1,9 @@
 # PRISM 26VI05 - Implemented pipeline
 
+> This is the improved `codex/gemma4-model-modified` branch. Start with
+> [MODIFIED_PIPELINE.md](MODIFIED_PIPELINE.md) for the current run instructions,
+> shared pipeline fixes, verification evidence and remaining GPU checks.
+
 ```
 [0] config ─► [1] synthesis ─► [2] splits ─► [3] pilot + self-test
                                    │
@@ -10,7 +14,8 @@
                        [5] + [7] ─► [8] validation gate ─► [9] score engine ─► [10] evaluation + audit
 ```
 
-All settings: `configs/config.yaml`. Every stage is resumable (re-running skips finished work).
+Default settings: `configs/config.yaml`. Colab writes separate runtime settings. Compatible completed work is reused;
+changed inputs/settings are rejected instead of silently mixing experiments. See the improved guide for recovery.
 
 ---
 
