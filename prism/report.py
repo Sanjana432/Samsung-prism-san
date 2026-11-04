@@ -14,6 +14,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from .metrics import CATEGORIES, CATEGORY_NAMES, METRIC_KEYS, METRIC_NAMES, QUALITY_BANDS, band_of  # noqa: E402
+from .evaluation import score_errors  # noqa: E402
 
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]   # validated categorical order (fixed, never cycled)
 INK, INK2, GRID, SURFACE = "#0b0b0b", "#52514e", "#e6e5e0", "#fcfcfb"
@@ -148,6 +149,8 @@ def write_report(results: dict, rows_by_model: dict, out_dir: str, title: str = 
     names = list(results)
     if not names:
         raise ValueError("at least one model result is required")
+    rows_by_model = {name: [dict(row, pred=None if score_errors(row.get("pred")) else row["pred"])
+                           for row in rows_by_model[name]] for name in names}
     for key in ("split_fingerprint", "dataset_fingerprint"):
         fingerprints = {result.get("provenance", {}).get(key) for result in results.values()} - {None}
         if len(fingerprints) > 1:
